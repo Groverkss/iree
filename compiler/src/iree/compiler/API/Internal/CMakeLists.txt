@@ -94,7 +94,12 @@ iree_cc_library(
   SRCS
     "IREEReduceToolEntryPoint.cpp"
   DEPS
-    iree::compiler::Tools::iree_compile_lib
+    LLVMSupport
+    MLIRIR
+    MLIRPass
+    MLIRSupport
+    iree::compiler::Reducer::iree_reduce_lib
+    iree::compiler::Tools::init_passes_and_dialects
     iree::compiler::bindings::c::headers
   PUBLIC
 )
