@@ -6,9 +6,11 @@
 
 #include "iree/compiler/Reducer/iree_reduce_lib.h"
 
-#include <iostream>
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Operation.h"
 
-int mlir::iree_compiler::runIreeReduceMain(int argc, char **argv) {
-  std::cout << "Hello from IREE Reduce!\n";
+using namespace mlir;
+
+int mlir::iree_compiler::ireeRunReducingStratergies(Operation *module) {
   return 0;
 }

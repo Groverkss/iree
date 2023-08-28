@@ -23,6 +23,7 @@
 
 using namespace mlir;
 using namespace llvm;
+using namespace mlir::iree_compiler;
 
 // Parse and verify the input MLIR file. Returns null on error.
 OwningOpRef<Operation *> loadModule(MLIRContext &context,
@@ -78,7 +79,7 @@ static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
     return failure();
   }
 
-  module.get()->print(output->os());
+  ireeRunReducingStratergies(module.get());
 
   // Keep the output file if the invocation of MlirOptMain was successful.
   output->keep();

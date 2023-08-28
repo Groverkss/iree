@@ -18,6 +18,9 @@ iree_cc_library(
   SRCS
     "iree_reduce_lib.cc"
   DEPS
+    MLIRIR
+    MLIRPass
+    MLIRSupport
     iree::compiler::bindings::c::headers
   PUBLIC
 )

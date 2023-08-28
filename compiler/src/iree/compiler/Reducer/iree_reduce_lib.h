@@ -8,9 +8,12 @@
 #define IREE_COMPILER_TOOLS_IREE_REDUCER_LIB_H
 
 namespace mlir {
+
+class Operation;
+
 namespace iree_compiler {
 
-int runIreeReduceMain(int argc, char **argv);
+int ireeRunReducingStratergies(Operation * module);
 
 } // namespace iree_compiler
 } // namespace mlir
