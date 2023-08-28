@@ -13,7 +13,13 @@ class Operation;
 
 namespace iree_compiler {
 
-int ireeRunReducingStratergies(Operation * module);
+enum ReductionStrategy {
+  // CL options implicitly use 0 if a flag is not present.
+  NoStrategy = 0,
+  EliminiateDispatches = 1,
+};
+
+int ireeRunReducingStrategies(Operation *module, ReductionStrategy strategy);
 
 } // namespace iree_compiler
 } // namespace mlir

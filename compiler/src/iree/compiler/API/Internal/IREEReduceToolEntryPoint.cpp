@@ -55,12 +55,22 @@ static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
       cl::value_desc("filename"), cl::init("-"),
       llvm::cl::cat(ireeReduceCategory));
 
+  static cl::opt<ReductionStrategy> reductionStrategy(
+      cl::desc("Choose reduction strategy:"), llvm::cl::cat(ireeReduceCategory),
+      cl::values(clEnumValN(EliminiateDispatches, "eliminate-dispatches",
+                            "Eliminate dispatches")));
+
   llvm::cl::HideUnrelatedOptions(ireeReduceCategory);
 
   InitLLVM y(argc, argv);
 
   llvm::cl::ParseCommandLineOptions(argc, argv,
                                     "IREE test case reduction tool.\n");
+
+  if (reductionStrategy == NoStrategy) {
+    llvm::errs() << "Reduction strategy not specified.";
+    return failure();
+  }
 
   // When reading from stdin and the input is a tty, it is often a user mistake
   // and the process "appears to be stuck". Print a message to let the user know
@@ -79,7 +89,7 @@ static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
     return failure();
   }
 
-  ireeRunReducingStratergies(module.get());
+  ireeRunReducingStrategies(module.get(), reductionStrategy);
 
   // Keep the output file if the invocation of MlirOptMain was successful.
   output->keep();

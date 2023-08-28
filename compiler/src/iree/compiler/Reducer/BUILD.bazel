@@ -33,6 +33,7 @@ iree_compiler_cc_library(
     hdrs = ["iree_reduce_lib.h"],
     deps = [
         "//compiler/bindings/c:headers",
+        "//compiler/src/iree/compiler/Reducer/Strategies",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
