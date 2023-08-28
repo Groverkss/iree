@@ -110,3 +110,14 @@ iree_compiler_cc_library(
         "@llvm-project//llvm:TargetParser",
     ],
 )
+
+iree_compiler_cc_library(
+    name = "IREEReduceToolEntryPoint",
+    srcs = [
+        "IREEReduceToolEntryPoint.cpp",
+    ],
+    deps = [
+        "//compiler/bindings/c:headers",
+        "//compiler/src/iree/compiler/Tools:iree_compile_lib",
+    ],
+)
