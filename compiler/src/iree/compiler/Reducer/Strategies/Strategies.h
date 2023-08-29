@@ -4,18 +4,19 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef IREE_COMPILER_REDUCER_STRATEGIES_PASS_DETAIL_H_
-#define IREE_COMPILER_REDUCER_STRATEGIES_PASS_DETAIL_H_
-
-#include "mlir/Pass/Pass.h"
+#ifndef IREE_COMPILER_REDUCER_STRATEGIES_H_
+#define IREE_COMPILER_REDUCER_STRATEGIES_H_
 
 namespace mlir {
+
+class Operation;
+class LogicalResult;
+
 namespace iree_compiler {
 
-#define GEN_PASS_CLASSES
-#include "iree/compiler/Reducer/Strategies/Passes.h.inc"
+LogicalResult runEliminateDispatchesStrategy(Operation *root);
 
 } // namespace iree_compiler
 } // namespace mlir
 
-#endif // IREE_COMPILER_REDUCER_STRATEGIES_PASS_DETAIL_H_
+#endif // IREE_COMPILER_REDUCER_STRATEGIES_H_

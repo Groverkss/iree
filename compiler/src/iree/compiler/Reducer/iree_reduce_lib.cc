@@ -6,7 +6,7 @@
 
 #include "iree/compiler/Reducer/iree_reduce_lib.h"
 
-#include "iree/compiler/Reducer/Strategies/Passes.h"
+#include "iree/compiler/Reducer/Strategies/Strategies.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
@@ -17,21 +17,25 @@ using namespace mlir;
 int mlir::iree_compiler::ireeRunReducingStrategies(Operation *module,
                                                    ReductionStrategy strategy) {
 
-  std::unique_ptr<Pass> strategyPass;
-  switch (strategy) {
-  case EliminiateDispatches:
-    strategyPass = createEliminateDispatchesPass();
-    break;
-  default:
-    llvm_unreachable("Unexpected reduction strategy");
+  LogicalResult res = success();
+
+  int curr = 0;
+
+  while (res.succeeded()) {
+    switch (strategy) {
+    case EliminiateDispatches:
+      res = runEliminateDispatchesStrategy(module);
+      break;
+    default:
+      llvm_unreachable("Unexpected reduction strategy");
+    }
+
+    if (++curr >= 15) {
+      break;
+    }
   }
 
-  PassManager pm(module->getContext());
-  pm.addPass(std::move(strategyPass));
-
-  if (failed(pm.run(module))) {
-    return 1;
-  }
+  module->dump();
 
   return 0;
 }
