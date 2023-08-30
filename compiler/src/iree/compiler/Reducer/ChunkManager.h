@@ -37,26 +37,6 @@ private:
   unsigned end;
 };
 
-template <>
-struct DenseMapInfo<Chunk> {
-  static inline Chunk getEmptyKey() {
-    return Chunk(DenseMapInfo<unsigned>::getEmptyKey(),
-                 DenseMapInfo<unsigned>::getEmptyKey());
-  }
-
-  static inline Chunk getTombstoneKey() {
-    return Chunk(DenseMapInfo<unsigned>::getTombstoneKey(),
-                 DenseMapInfo<unsigned>::getTombstoneKey());
-  }
-
-  static unsigned getHashValue(const Chunk &val) {
-    std::pair<unsigned, unsigned> pair = {val.getBegin(), val.getEnd()};
-    return DenseMapInfo<std::pair<unsigned, unsigned>>::getHashValue(pair);
-  }
-
-  static bool isEqual(const Chunk &lhs, const Chunk &rhs) { return lhs == rhs; }
-};
-
 /// Interface for a delta pass to query into chunks.
 class ChunkManager {
 public:
@@ -78,5 +58,29 @@ private:
 
 } // namespace iree_compiler
 } // namespace mlir
+
+namespace llvm {
+using Chunk = mlir::iree_compiler::Chunk;
+
+template <>
+struct DenseMapInfo<Chunk> {
+  static inline Chunk getEmptyKey() {
+    return Chunk(DenseMapInfo<unsigned>::getEmptyKey(),
+                 DenseMapInfo<unsigned>::getEmptyKey());
+  }
+
+  static inline Chunk getTombstoneKey() {
+    return Chunk(DenseMapInfo<unsigned>::getTombstoneKey(),
+                 DenseMapInfo<unsigned>::getTombstoneKey());
+  }
+
+  static unsigned getHashValue(const Chunk &val) {
+    std::pair<unsigned, unsigned> pair(val.getBegin(), val.getEnd());
+    return DenseMapInfo<std::pair<unsigned, unsigned>>::getHashValue(pair);
+  }
+
+  static bool isEqual(const Chunk &LHS, const Chunk &RHS) { return LHS == RHS; }
+};
+} // namespace llvm
 
 #endif // IREE_COMPILER_REDUCER_CHUNK_MANAGER_H
