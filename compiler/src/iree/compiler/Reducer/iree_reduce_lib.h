@@ -7,19 +7,15 @@
 #ifndef IREE_COMPILER_TOOLS_IREE_REDUCER_LIB_H
 #define IREE_COMPILER_TOOLS_IREE_REDUCER_LIB_H
 
+#include "mlir/Support/LLVM.h"
+
 namespace mlir {
 
 class Operation;
 
 namespace iree_compiler {
 
-enum ReductionStrategy {
-  // CL options implicitly use 0 if a flag is not present.
-  NoStrategy = 0,
-  EliminiateDispatches = 1,
-};
-
-int ireeRunReducingStrategies(Operation *module, ReductionStrategy strategy);
+int ireeRunReducingStrategies(Operation *module, StringRef testScript);
 
 } // namespace iree_compiler
 } // namespace mlir

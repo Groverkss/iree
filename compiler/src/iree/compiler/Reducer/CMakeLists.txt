@@ -14,14 +14,23 @@ iree_cc_library(
   NAME
     iree_reduce_lib
   HDRS
+    "ChunkManager.h"
+    "Delta.h"
+    "DeltaStratergies.h"
+    "Oracle.h"
+    "WorkItem.h"
     "iree_reduce_lib.h"
   SRCS
+    "ChunkManager.cpp"
+    "Delta.cpp"
+    "Oracle.cpp"
+    "ReduceFlowDispatchDelta.cpp"
+    "WorkItem.cpp"
     "iree_reduce_lib.cc"
   DEPS
     MLIRIR
     MLIRPass
     MLIRSupport
-    iree::compiler::Reducer::Strategies
     iree::compiler::bindings::c::headers
   PUBLIC
 )

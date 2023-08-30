@@ -25,6 +25,8 @@ using namespace mlir;
 using namespace llvm;
 using namespace mlir::iree_compiler;
 
+llvm::cl::OptionCategory ireeReduceCategory("iree-reduce options");
+
 // Parse and verify the input MLIR file. Returns null on error.
 OwningOpRef<Operation *> loadModule(MLIRContext &context,
                                     StringRef inputFilename,
@@ -44,7 +46,10 @@ OwningOpRef<Operation *> loadModule(MLIRContext &context,
 
 static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
                                           MLIRContext &registry) {
-  static llvm::cl::OptionCategory ireeReduceCategory("iree-reduce options");
+
+  static llvm::cl::opt<std::string> testScript(cl::Positional, cl::Required,
+                                               cl::desc("<test script>"),
+                                               cl::cat(ireeReduceCategory));
 
   static cl::opt<std::string> inputFilename(
       cl::Positional, cl::desc("<input file>"), cl::init("-"),
@@ -55,22 +60,12 @@ static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
       cl::value_desc("filename"), cl::init("-"),
       llvm::cl::cat(ireeReduceCategory));
 
-  static cl::opt<ReductionStrategy> reductionStrategy(
-      cl::desc("Choose reduction strategy:"), llvm::cl::cat(ireeReduceCategory),
-      cl::values(clEnumValN(EliminiateDispatches, "eliminate-dispatches",
-                            "Eliminate dispatches")));
-
   llvm::cl::HideUnrelatedOptions(ireeReduceCategory);
 
   InitLLVM y(argc, argv);
 
   llvm::cl::ParseCommandLineOptions(argc, argv,
                                     "IREE test case reduction tool.\n");
-
-  if (reductionStrategy == NoStrategy) {
-    llvm::errs() << "Reduction strategy not specified.";
-    return failure();
-  }
 
   // When reading from stdin and the input is a tty, it is often a user mistake
   // and the process "appears to be stuck". Print a message to let the user know
@@ -89,7 +84,7 @@ static LogicalResult ireeReduceMainFromCL(int argc, char **argv,
     return failure();
   }
 
-  ireeRunReducingStrategies(module.get(), reductionStrategy);
+  ireeRunReducingStrategies(module.get(), testScript);
 
   // Keep the output file if the invocation of MlirOptMain was successful.
   output->keep();

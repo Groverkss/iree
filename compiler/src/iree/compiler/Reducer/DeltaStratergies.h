@@ -4,19 +4,17 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef IREE_COMPILER_REDUCER_STRATEGIES_H_
-#define IREE_COMPILER_REDUCER_STRATEGIES_H_
+#ifndef IREE_COMPILER_REDUCER_DELTA_STRATEGIES_H_
+#define IREE_COMPILER_REDUCER_DELTA_STRATEGIES_H_
+
+#include "iree/compiler/Reducer/Delta.h"
 
 namespace mlir {
-
-class Operation;
-class LogicalResult;
-
 namespace iree_compiler {
 
-LogicalResult runEliminateDispatchesStrategy(Operation *root);
+void reduceFlowDispatchDelta(Oracle &oracle, WorkItem &workItem);
 
 } // namespace iree_compiler
 } // namespace mlir
 
-#endif // IREE_COMPILER_REDUCER_STRATEGIES_H_
+#endif // IREE_COMPILER_REDUCER_DELTA_STRATEGIES_H_
