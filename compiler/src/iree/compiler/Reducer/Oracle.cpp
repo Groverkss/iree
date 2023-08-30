@@ -48,7 +48,9 @@ bool Oracle::isInteresting(WorkItem &workItem) {
     llvm::report_fatal_error(llvm::Twine("Failed to run oracle: ") + errMsg);
   }
 
-  if (!exitCode)
+  if (exitCode == 0) {
+    return true;
+  } else {
     return false;
-  return true;
+  }
 }

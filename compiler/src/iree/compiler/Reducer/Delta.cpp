@@ -11,10 +11,14 @@ using namespace mlir::iree_compiler;
 
 static std::unique_ptr<WorkItem>
 checkChunk(Chunk maybeUninterestingChunk, Oracle &oracle, WorkItem &root,
-           DeltaFunc deltaFunc, ArrayRef<Chunk> maybeInterestingChunks) {
+           DeltaFunc deltaFunc, ArrayRef<Chunk> maybeInterestingChunks,
+           DenseSet<Chunk> &uninterestingChunks) {
   SmallVector<Chunk> currentChunks;
   copy_if(maybeInterestingChunks, std::back_inserter(currentChunks),
-          [&](Chunk chunk) { return chunk != maybeUninterestingChunk; });
+          [&](Chunk chunk) {
+            return chunk == maybeUninterestingChunk ||
+                   !uninterestingChunks.count(chunk);
+          });
 
   ChunkManager chunker(currentChunks);
   std::unique_ptr<WorkItem> clonedProgram = root.clone();
@@ -33,7 +37,7 @@ static bool increaseGranuality(SmallVector<Chunk> &chunks) {
   bool anyNewSplit = false;
 
   for (Chunk c : chunks) {
-    if (c.getEnd() - c.getEnd() <= 1) {
+    if (c.getEnd() - c.getBegin() <= 1) {
       newChunks.push_back(c);
     } else {
       int half = (c.getEnd() + c.getBegin()) / 2;
@@ -68,7 +72,7 @@ void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
 
   assert(root.verify().succeeded() &&
          "Output module does not verify after counting chunks.");
-  assert(!oracle.isInteresting(root) &&
+  assert(oracle.isInteresting(root) &&
          "Output module not interesting after counting chunks.");
 
   if (!numTargets) {
@@ -87,12 +91,11 @@ void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
 
     for (Chunk chunk : maybeInteresting) {
       std::unique_ptr<WorkItem> result = nullptr;
-      result = checkChunk(chunk, oracle, root, deltaFunc, maybeInteresting);
+      result = checkChunk(chunk, oracle, root, deltaFunc, maybeInteresting,
+                          uninterestingChunks);
       if (!result)
         continue;
 
-      // TODO: Teach checkChunk to ignore pieces that we already know are
-      // uninsteresting.
       // Removing this chunk is still interesting. Mark this chunk as
       // uninteresting.
       uninterestingChunks.insert(chunk);
