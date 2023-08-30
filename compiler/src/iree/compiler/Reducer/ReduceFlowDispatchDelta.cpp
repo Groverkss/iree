@@ -44,14 +44,14 @@ static void extractFlowDispatchInModule(ChunkManager &chunker,
     for (auto dispatchOp : funcOp.getOps<IREE::Flow::DispatchOp>()) {
       // Check if this dispatch op has a dynamic shape outputs.
       bool hasDynamicDims = false;
-      // for (Type resType : dispatchOp.getResultTypes()) {
-      //   if (auto tensor = dyn_cast<RankedTensorType>(resType)) {
-      //     if (!tensor.hasStaticShape()) {
-      //       hasDynamicDims = true;
-      //       break;
-      //     }
-      //   }
-      // }
+      for (Type resType : dispatchOp.getResultTypes()) {
+        if (auto tensor = dyn_cast<RankedTensorType>(resType)) {
+          if (!tensor.hasStaticShape()) {
+            hasDynamicDims = true;
+            break;
+          }
+        }
+      }
 
       // Ignore dynamic shape outputs as they cannot be raised to globals
       // easily.
@@ -102,5 +102,5 @@ static void extractFlowDispatchInModule(ChunkManager &chunker,
 void mlir::iree_compiler::reduceFlowDispatchDelta(Oracle &oracle,
                                                   WorkItem &workItem) {
   runDeltaPass(oracle, workItem, extractFlowDispatchInModule,
-               "Reducing Flow Executables");
+               "Reducing Flow Dispatches Random Globals");
 }

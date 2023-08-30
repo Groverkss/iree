@@ -12,6 +12,7 @@
 namespace mlir {
 namespace iree_compiler {
 
+void reduceFlowDispatchUsingConstantsDelta(Oracle &oracle, WorkItem &workItem);
 void reduceFlowDispatchDelta(Oracle &oracle, WorkItem &workItem);
 
 } // namespace iree_compiler

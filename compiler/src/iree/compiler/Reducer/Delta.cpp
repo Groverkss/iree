@@ -16,18 +16,27 @@ checkChunk(Chunk maybeUninterestingChunk, Oracle &oracle, WorkItem &root,
   SmallVector<Chunk> currentChunks;
   copy_if(maybeInterestingChunks, std::back_inserter(currentChunks),
           [&](Chunk chunk) {
-            return chunk == maybeUninterestingChunk ||
+            return chunk != maybeUninterestingChunk &&
                    !uninterestingChunks.count(chunk);
           });
+
+  llvm::errs() << "Checking chunk: \n";
+  maybeUninterestingChunk.dump(); 
+  llvm::errs() << "Current chunks being removed\n";
+  for (Chunk c : currentChunks) {
+    c.dump();
+  }
 
   ChunkManager chunker(currentChunks);
   std::unique_ptr<WorkItem> clonedProgram = root.clone();
   deltaFunc(chunker, *clonedProgram.get());
 
   if (!oracle.isInteresting(*clonedProgram)) {
+    llvm::errs() << "Chunk is uninteresting\n";
     return nullptr;
   }
 
+  llvm::errs() << "Chunk is interesting\n";
   return clonedProgram;
 };
 
@@ -108,4 +117,6 @@ void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
 
   } while (!maybeInteresting.empty() && (atleastOneNewUninteresting ||
                                          increaseGranuality(maybeInteresting)));
+
+  reducedProgram->getModule()->dump();
 }
