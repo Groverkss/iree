@@ -30,7 +30,10 @@ void Chunk::print(raw_ostream &os) const {
   os << "[" << begin << ", " << end << ")";
 }
 
-void Chunk::dump() const { print(llvm::errs()); }
+void Chunk::dump() const {
+  print(llvm::errs());
+  llvm::errs() << "\n";
+}
 
 bool ChunkManager::shouldFeatureBeKept() {
   if (chunksToKeep.empty()) {

@@ -19,13 +19,11 @@
 using namespace mlir;
 using namespace mlir::iree_compiler;
 
-static IREE::Util::GlobalOpInterface createGlobalRandomInputs(OpBuilder builder,
-                                                              Type type) {
+static IREE::Util::GlobalOpInterface
+createGlobalRandomInputs(OpBuilder builder, Type type,
+                         llvm::function_ref<int64_t()> gen) {
   // Generate a random number.
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<int64_t> dis(0, INT64_MAX - 1);
-  int64_t inputNumber = dis(gen);
+  int64_t inputNumber = gen();
   // Create a util.global = util.byte_pattern.
   auto globalName = "__iree_reduce_" + std::to_string(inputNumber);
   auto bytePattern =
@@ -44,7 +42,20 @@ static void extractFlowDispatchInModule(ChunkManager &chunker,
   SmallVector<IREE::Flow::DispatchOp> dispatchOps;
   for (auto funcOp : module.getOps<func::FuncOp>()) {
     for (auto dispatchOp : funcOp.getOps<IREE::Flow::DispatchOp>()) {
-      if (!chunker.shouldFeatureBeKept()) {
+      // Check if this dispatch op has a dynamic shape outputs.
+      bool hasDynamicDims = false;
+      // for (Type resType : dispatchOp.getResultTypes()) {
+      //   if (auto tensor = dyn_cast<RankedTensorType>(resType)) {
+      //     if (!tensor.hasStaticShape()) {
+      //       hasDynamicDims = true;
+      //       break;
+      //     }
+      //   }
+      // }
+
+      // Ignore dynamic shape outputs as they cannot be raised to globals
+      // easily.
+      if (!hasDynamicDims && !chunker.shouldFeatureBeKept()) {
         dispatchOps.push_back(dispatchOp);
       }
     }
@@ -54,6 +65,11 @@ static void extractFlowDispatchInModule(ChunkManager &chunker,
     return;
   }
 
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<int64_t> dis(0, INT64_MAX - 1);
+  auto genRandom = [&]() { return dis(gen); };
+
   // Replace all dispatch ops with random inputs.
   OpBuilder builder = workItem.getBuilder();
   for (auto dispatchOp : dispatchOps) {
@@ -61,7 +77,7 @@ static void extractFlowDispatchInModule(ChunkManager &chunker,
     for (Value result : dispatchOp.getResults()) {
       auto type = result.getType();
       builder.setInsertionPointToStart(module.getBody());
-      auto globalOp = createGlobalRandomInputs(builder, type);
+      auto globalOp = createGlobalRandomInputs(builder, type, genRandom);
       // Create a util.load and replace it with the result.
       builder.setInsertionPoint(dispatchOp);
       auto loadOp = builder.create<IREE::Util::GlobalLoadOp>(

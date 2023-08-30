@@ -8,6 +8,7 @@
 #define IREE_COMPILER_REDUCER_CHUNK_MANAGER_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMapInfo.h"
 #include "mlir/Support/LLVM.h"
 
 namespace mlir {
@@ -34,6 +35,26 @@ public:
 private:
   unsigned begin;
   unsigned end;
+};
+
+template <>
+struct DenseMapInfo<Chunk> {
+  static inline Chunk getEmptyKey() {
+    return Chunk(DenseMapInfo<unsigned>::getEmptyKey(),
+                 DenseMapInfo<unsigned>::getEmptyKey());
+  }
+
+  static inline Chunk getTombstoneKey() {
+    return Chunk(DenseMapInfo<unsigned>::getTombstoneKey(),
+                 DenseMapInfo<unsigned>::getTombstoneKey());
+  }
+
+  static unsigned getHashValue(const Chunk &val) {
+    std::pair<unsigned, unsigned> pair = {val.getBegin(), val.getEnd()};
+    return DenseMapInfo<std::pair<unsigned, unsigned>>::getHashValue(pair);
+  }
+
+  static bool isEqual(const Chunk &lhs, const Chunk &rhs) { return lhs == rhs; }
 };
 
 /// Interface for a delta pass to query into chunks.

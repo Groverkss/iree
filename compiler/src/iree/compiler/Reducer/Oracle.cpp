@@ -37,9 +37,8 @@ bool Oracle::isInteresting(WorkItem &workItem) {
 
   // Run the oracle.
   SmallVector<StringRef> testerArgs;
+  testerArgs.push_back(testScript);
   testerArgs.push_back(filepath);
-  llvm::errs() << filepath << "\n";
-  output.keep();
 
   std::string errMsg;
   int exitCode = llvm::sys::ExecuteAndWait(testScript, testerArgs, std::nullopt,

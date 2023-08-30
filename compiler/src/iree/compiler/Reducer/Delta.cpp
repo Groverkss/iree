@@ -27,7 +27,33 @@ checkChunk(Chunk maybeUninterestingChunk, Oracle &oracle, WorkItem &root,
   return clonedProgram;
 };
 
-static bool increaseGranuality() { return false; };
+static bool increaseGranuality(SmallVector<Chunk> &chunks) {
+  llvm::errs() << "Increasing granularity\n";
+  SmallVector<Chunk> newChunks;
+  bool anyNewSplit = false;
+
+  for (Chunk c : chunks) {
+    if (c.getEnd() - c.getEnd() <= 1) {
+      newChunks.push_back(c);
+    } else {
+      int half = (c.getEnd() + c.getBegin()) / 2;
+      newChunks.push_back(Chunk(c.getBegin(), half));
+      newChunks.push_back(Chunk(half, c.getEnd()));
+      anyNewSplit = true;
+    }
+  }
+
+  if (anyNewSplit) {
+    chunks = newChunks;
+    llvm::errs() << "Successfully increased granularity\n";
+    llvm::errs() << "New Chunks:\n";
+    for (Chunk c : chunks) {
+      c.dump();
+    }
+  }
+
+  return anyNewSplit;
+};
 
 void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
                                        DeltaFunc deltaFunc, StringRef message) {
@@ -57,6 +83,7 @@ void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
   bool atleastOneNewUninteresting;
   do {
     atleastOneNewUninteresting = false;
+    DenseSet<Chunk> uninterestingChunks;
 
     for (Chunk chunk : maybeInteresting) {
       std::unique_ptr<WorkItem> result = nullptr;
@@ -64,12 +91,18 @@ void mlir::iree_compiler::runDeltaPass(Oracle &oracle, WorkItem &root,
       if (!result)
         continue;
 
+      // TODO: Teach checkChunk to ignore pieces that we already know are
+      // uninsteresting.
       // Removing this chunk is still interesting. Mark this chunk as
       // uninteresting.
+      uninterestingChunks.insert(chunk);
       atleastOneNewUninteresting = true;
       reducedProgram = std::move(result);
     }
 
-  } while (!maybeInteresting.empty() &&
-           (atleastOneNewUninteresting || increaseGranuality()));
+    erase_if(maybeInteresting,
+             [&](Chunk chunk) { return uninterestingChunks.count(chunk) > 0; });
+
+  } while (!maybeInteresting.empty() && (atleastOneNewUninteresting ||
+                                         increaseGranuality(maybeInteresting)));
 }
