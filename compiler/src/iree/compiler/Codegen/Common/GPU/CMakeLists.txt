@@ -52,6 +52,7 @@ iree_cc_library(
     "GPUMultiBuffering.cpp"
     "GPUPatterns.cpp"
     "GPUPipelining.cpp"
+    "GPUPrefetching.cpp"
     "GPUReduceBankConflicts.cpp"
     "GPUTensorAlloc.cpp"
     "GPUTensorTile.cpp"

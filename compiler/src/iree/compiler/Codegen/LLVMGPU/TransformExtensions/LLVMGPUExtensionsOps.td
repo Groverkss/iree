@@ -498,6 +498,36 @@ def GPUPipeliningOp : Op<
   }];
 }
 
+def GPUPrefetchingOp : Op<
+    Transform_Dialect, "iree.gpu_prefetcing", [
+      FunctionalStyleTransformOpTrait,
+      MemoryEffectsOpInterface,
+      TransformEachOpTrait,
+      TransformOpInterface,
+      ReportTrackingListenerFailuresOpTrait]> {
+  let description = [{
+  }];
+
+  let arguments = (
+      ins TransformHandleTypeInterface:$for_op);
+  let results = (outs TransformHandleTypeInterface:$result);
+
+  let cppNamespace = "mlir::iree_compiler::IREE::transform_dialect";
+
+  let assemblyFormat = [{
+    $for_op
+    attr-dict
+    `:` functional-type(operands, results)}];
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::scf::ForOp forOp,
+        ::mlir::transform::ApplyToEachResultList &results,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
 def SynchronizeLoopOp : Op<
     Transform_Dialect, "iree.synchronize_loop", [
       DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,

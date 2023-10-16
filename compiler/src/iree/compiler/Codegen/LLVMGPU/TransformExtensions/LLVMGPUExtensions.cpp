@@ -813,14 +813,14 @@ transform_dialect::PipelineSharedMemoryCopiesOp::applyToOne(
 // GPUPipeliningOp
 //===----------------------------------------------------------------------===//
 
-DiagnosedSilenceableFailure
-transform_dialect::GPUPipeliningOp::applyToOne(
+DiagnosedSilenceableFailure transform_dialect::GPUPipeliningOp::applyToOne(
     transform::TransformRewriter &rewriter, scf::ForOp forOp,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
   int64_t depth(getDepth());
   auto strategy = getStrategy();
-  PipeliningSchedulingStrategy pipeliningStrategy = PipeliningSchedulingStrategy::nvidiaTensorCore;
+  PipeliningSchedulingStrategy pipeliningStrategy =
+      PipeliningSchedulingStrategy::nvidiaTensorCore;
   if (strategy == 0) {
     pipeliningStrategy = PipeliningSchedulingStrategy::loadGlobalStage0;
   }
@@ -829,6 +829,24 @@ transform_dialect::GPUPipeliningOp::applyToOne(
   }
   FailureOr<scf::ForOp> pipelinedFor = iree_compiler::pipelineSharedMemoryCopy(
       rewriter, forOp, pipeliningStrategy, getPeelEpilogue(), depth);
+  if (failed(pipelinedFor)) {
+    results.push_back(forOp);
+    return DiagnosedSilenceableFailure::success();
+  }
+  results.push_back(pipelinedFor.value());
+  return DiagnosedSilenceableFailure::success();
+}
+
+//===----------------------------------------------------------------------===//
+// GPUPrefetchingOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure transform_dialect::GPUPrefetchingOp::applyToOne(
+    transform::TransformRewriter &rewriter, scf::ForOp forOp,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
+  FailureOr<scf::ForOp> pipelinedFor =
+      iree_compiler::prefetchSharedMemoryCopy(rewriter, forOp);
   if (failed(pipelinedFor)) {
     results.push_back(forOp);
     return DiagnosedSilenceableFailure::success();
@@ -1534,7 +1552,8 @@ void transform_dialect::ApplyPrepareVectorToAMDMMAPatternsOp::populatePatterns(
 //===---------------------------------------------------------------------===//
 // FoldExtIntoContractionOp
 //===---------------------------------------------------------------------===//
-DiagnosedSilenceableFailure transform_dialect::FoldExtIntoContractionOp::applyToOne(
+DiagnosedSilenceableFailure
+transform_dialect::FoldExtIntoContractionOp::applyToOne(
     transform::TransformRewriter &rewriter, vector::ContractionOp target,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
@@ -1548,9 +1567,8 @@ DiagnosedSilenceableFailure transform_dialect::FoldExtIntoContractionOp::applyTo
   }
 
   auto newContractOp = rewriter.replaceOpWithNewOp<vector::ContractionOp>(
-      target, lhsDefOp->getOperand(0), rhsDefOp->getOperand(0),
-      target.getAcc(), target.getIndexingMapsAttr(),
-      target.getIteratorTypesAttr());
+      target, lhsDefOp->getOperand(0), rhsDefOp->getOperand(0), target.getAcc(),
+      target.getIndexingMapsAttr(), target.getIteratorTypesAttr());
   results.push_back(newContractOp);
   return DiagnosedSilenceableFailure::success();
 }

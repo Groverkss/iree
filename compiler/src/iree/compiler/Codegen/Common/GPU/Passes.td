@@ -58,6 +58,12 @@ def GPUPipelining : Pass<"iree-codegen-gpu-pipelining", "func::FuncOp"> {
   ];
 }
 
+def GPUPrefetching :
+    Pass<"iree-codegen-gpu-prefetching", "func::FuncOp"> {
+  let summary = "Pass to prefetch memory accesses in a loop.";
+  let constructor = "mlir::iree_compiler::createGPUPrefetchingPass()";
+}
+
 def GPUReduceBankConflicts :
     Pass<"iree-codegen-gpu-reduce-bank-conflicts", "func::FuncOp"> {
   let summary = "Pass to try to reduce the number of bank conflicts.";

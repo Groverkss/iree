@@ -46,6 +46,9 @@ pipelineSharedMemoryCopy(RewriterBase &rewriter, scf::ForOp forOp,
                          PipeliningSchedulingStrategy startegy,
                          bool peelEpilogue, int64_t depth);
 
+FailureOr<scf::ForOp> prefetchSharedMemoryCopy(RewriterBase &rewriter,
+                                               scf::ForOp forOp);
+
 /// Tiles Linalg ops in the given `funcOp` along reduction dimensions to serial
 /// loops without distribution. If `fuseInputProducer` is true, input producers
 /// will be fused into the serial loop.
@@ -56,7 +59,6 @@ LogicalResult tileReductionToSerialLoops(func::FuncOp funcOp,
 // ops. Expects the memory copy to be marked with copy_to_workgroup_memory
 // marker.
 LogicalResult gpuDistributeSharedMemoryCopy(func::FuncOp funcOp);
-
 
 LogicalResult swizzleWorkgroupsInFunc(func::FuncOp funcOp,
                                       unsigned swizzleLogTile);
@@ -97,6 +99,9 @@ std::unique_ptr<OperationPass<func::FuncOp>>
 createGPUPipeliningPass(bool epiloguePeeling = true, unsigned depth = 1,
                         PipeliningSchedulingStrategy schedule =
                             PipeliningSchedulingStrategy::loadGlobalStage0);
+
+/// Apply software prefetching.
+std::unique_ptr<OperationPass<func::FuncOp>> createGPUPrefetchingPass();
 
 /// Apply transformation to reduce the number of bank conflicts when accessing
 /// shared memory by padding fastest moving dimension with the specified size.
