@@ -206,8 +206,6 @@ public:
       readWriteMap.map(arg.value(), newForOp.getRegionIterArgs()[arg.index()]);
     }
 
-    bool interleave = true;
-
     // Read(i+1).
     for (Operation *op : readStage) {
       Operation *newOp =
@@ -217,19 +215,13 @@ public:
             }
           });
 
-      // Try to interleave the previous write with a transfer_read.
-      if (interleave) {
-        if (auto read = dyn_cast<vector::TransferReadOp>(op)) {
-          interleave = false;
-          rewriter.create<gpu::BarrierOp>(forOp.getLoc());
-        }
-      }
-
       // Map read operations to new read operations.
       for (unsigned i = 0; i < op->getNumResults(); ++i) {
         readWriteMap.map(op->getResult(i), newOp->getResult(i));
       }
     }
+
+    rewriter.create<gpu::BarrierOp>(forOp.getLoc());
 
     // Compute(i).
     for (Operation *op : computeStage) {
