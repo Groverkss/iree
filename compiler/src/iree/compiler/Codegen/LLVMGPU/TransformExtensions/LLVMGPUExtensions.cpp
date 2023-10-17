@@ -787,6 +787,39 @@ DiagnosedSilenceableFailure transform_dialect::PromoteOperandsOp::applyToOne(
 }
 
 //===----------------------------------------------------------------------===//
+// PromoteResultsOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure transform_dialect::PromoteResultsOp::applyToOne(
+    transform::TransformRewriter &rewriter, Operation *target,
+    transform::ApplyToEachResultList &results,
+    transform::TransformState &state) {
+  Location loc = target->getLoc();
+  OpBuilder::InsertionGuard g(rewriter);
+  rewriter.setInsertionPointAfter(target);
+  SmallVector<int64_t> indices = llvm::to_vector(getIndices());
+  int64_t numResults = target->getNumResults();
+
+  results.push_back(target);
+  bufferization::BufferizationOptions options;
+  for (int64_t index : indices) {
+    if ((index >= 0) && (index < numResults)) {
+      FailureOr<Value> ret = bufferization::allocateTensorForShapedValue(
+          rewriter, loc, target->getResult(index), false, options, true);
+      if (failed(ret)) {
+        return emitDefaultDefiniteFailure(target) << "failed to promote result";
+      }
+      target->getResult(index).replaceAllUsesExcept(
+          ret.value(), ret.value().getDefiningOp());
+      results.push_back(ret.value().getDefiningOp());
+    } else {
+      return emitDefaultDefiniteFailure(target) << "invalid index specified";
+    }
+  }
+  return DiagnosedSilenceableFailure::success();
+}
+
+//===----------------------------------------------------------------------===//
 // PipelineSharedMemoryCopiesOp
 //===----------------------------------------------------------------------===//
 

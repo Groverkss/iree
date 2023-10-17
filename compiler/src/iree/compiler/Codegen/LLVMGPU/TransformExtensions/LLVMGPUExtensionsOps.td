@@ -404,6 +404,40 @@ def PromoteOperandsOp :
   }];
 }
 
+def PromoteResultsOp :
+  Op<Transform_Dialect, "iree.promote_results",
+    [FunctionalStyleTransformOpTrait,
+     MemoryEffectsOpInterface,
+     TransformEachOpTrait,
+     TransformOpInterface,
+     ReportTrackingListenerFailuresOpTrait]> {
+  let description = [{
+    This op promotes the specified results of the provided target handle.
+
+    #### Return modes
+    This op consume its target handle and returns a new handle to its target handle
+    as well as an allocTensorOp for each of the provided valid indices.
+
+    If the promotion of any specified result fails to occur, the op definitely
+    fails.
+  }];
+
+  let arguments = (ins TransformHandleTypeInterface:$target,
+                   DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$indices);
+  let results = (outs Variadic<TransformHandleTypeInterface>:$result);
+
+  let assemblyFormat = [{ $target $indices attr-dict `:` functional-type(operands, results)}];
+  let cppNamespace = "mlir::iree_compiler::IREE::transform_dialect";
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure applyToOne(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::Operation *target,
+        ::mlir::transform::ApplyToEachResultList &results,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
 def PipelineSharedMemoryCopiesOp : Op<
     Transform_Dialect, "iree.pipeline_shared_memory_copies", [
       FunctionalStyleTransformOpTrait,
