@@ -1,13 +1,15 @@
 
+#include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/Builders.h"
@@ -19,6 +21,16 @@
 #include "mlir/Transforms/Passes.h"
 
 namespace mlir::iree_compiler {
+
+static bool isGlobalMemorySpace(Attribute memorySpace) {
+  if (!memorySpace)
+    return true;
+  if (auto intAttr = llvm::dyn_cast<IntegerAttr>(memorySpace))
+    return intAttr.getInt() == 1;
+  if (auto gpuAttr = llvm::dyn_cast<gpu::AddressSpaceAttr>(memorySpace))
+    return gpuAttr.getValue() == gpu::AddressSpace::Global;
+  return false;
+}
 
 namespace {
 // Transform contract into (k, m)x(k, n)x(m, n) form so that it can be converted
@@ -170,23 +182,48 @@ struct VectorTransferReadToLoad final
         assert(vectorShape[i] == 1);
         insertionIndices.push_back(0);
       }
-      constant = rewriter.create<arith::ConstantOp>(loc, vectorType,
-        rewriter.getZeroAttr(vectorType));
+      constant = rewriter.create<arith::ConstantOp>(
+          loc, vectorType, rewriter.getZeroAttr(vectorType));
     }
+
     Value source = op.getSource();
     SmallVector<Value> indices(op.getIndices().begin(), op.getIndices().end());
-    // Bitcast to integer
-    for (int i = 0; i < indices.size(); i++)
-      indices[i] = rewriter.create<arith::IndexCastOp>(loc, rewriter.getI32Type(), indices[i]);
-    // TODO: Handle additional transfer read attributes like permutation maps, masks etc.
-    Value sgprOffset = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
-    auto loadOp = rewriter.create<amdgpu::RawBufferLoadOp>(loc, VectorType::get(shape1D, vectorType.getElementType()), source,
-            indices, rewriter.getBoolAttr(false), rewriter.getI32IntegerAttr(0), sgprOffset);
-    if (insertionRequired) {
-      rewriter.replaceOpWithNewOp<vector::InsertOp>(op, loadOp.getResult(), constant, insertionIndices);
-    } else {
-      rewriter.replaceOp(op, loadOp);
+
+    // Use raw buffer load if this is a copy from global memory.
+    if (auto memref = dyn_cast<MemRefType>(source.getType())) {
+      if (isGlobalMemorySpace(memref.getMemorySpace())) {
+        // Bitcast to integer
+        for (int i = 0; i < indices.size(); i++)
+          indices[i] = rewriter.create<arith::IndexCastOp>(
+              loc, rewriter.getI32Type(), indices[i]);
+        // TODO: Handle additional transfer read attributes like permutation
+        // maps, masks etc.
+        Value sgprOffset = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getI32IntegerAttr(0));
+        auto loadOp = rewriter.create<amdgpu::RawBufferLoadOp>(
+            loc, VectorType::get(shape1D, vectorType.getElementType()), source,
+            indices, rewriter.getBoolAttr(false), rewriter.getI32IntegerAttr(0),
+            sgprOffset);
+        if (insertionRequired) {
+          rewriter.replaceOpWithNewOp<vector::InsertOp>(
+              op, loadOp.getResult(), constant, insertionIndices);
+        } else {
+          rewriter.replaceOp(op, loadOp);
+        }
+      } else {
+        // Lower to vector.load + vector.insert
+        vector::LoadOp loadOp = rewriter.create<vector::LoadOp>(
+            loc, VectorType::get(shape1D, vectorType.getElementType()), source,
+            indices);
+        if (insertionRequired) {
+          rewriter.replaceOpWithNewOp<vector::InsertOp>(
+              op, loadOp.getResult(), constant, insertionIndices);
+        } else {
+          rewriter.replaceOp(op, loadOp);
+        }
+      }
     }
+
     return success();
   }
 };
@@ -212,18 +249,19 @@ struct VectorTransferWriteToStore final
         assert(vectorShape[i] == 1);
         extractionIndices.push_back(0);
       }
-      vector = rewriter.create<vector::ExtractOp>(loc, vector, extractionIndices);
+      vector =
+          rewriter.create<vector::ExtractOp>(loc, vector, extractionIndices);
     }
     SmallVector<Value> indices(op.getIndices().begin(), op.getIndices().end());
-    // TODO: Handle additional transfer read attributes like permutation maps, masks etc.
+    // TODO: Handle additional transfer read attributes like permutation maps,
+    // masks etc.
     rewriter.replaceOpWithNewOp<vector::StoreOp>(op, vector, source, indices);
     return success();
   }
 };
 
 // Transform gpu.barrier -> amdgpu.lds_barrier
-struct RewriteBarriers final
-    : public OpRewritePattern<gpu::BarrierOp> {
+struct RewriteBarriers final : public OpRewritePattern<gpu::BarrierOp> {
   using OpRewritePattern<gpu::BarrierOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(gpu::BarrierOp op,
@@ -244,8 +282,8 @@ struct RewriteBarriers final
 
 void populatePrepareVectorToAMDMMAPatterns(RewritePatternSet &patterns,
                                            bool useMfma) {
-  patterns.add<VectorTransferReadToLoad, VectorTransferWriteToStore, RewriteBarriers>(
-      patterns.getContext());
+  patterns.add<VectorTransferReadToLoad, VectorTransferWriteToStore,
+               RewriteBarriers>(patterns.getContext());
 }
 
 } // namespace mlir::iree_compiler
