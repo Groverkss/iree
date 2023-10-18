@@ -8,12 +8,14 @@
 
 #include "iree/compiler/Codegen/Transforms/Transforms.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
+#include "iree/compiler/Dialect/Util/IR/UtilTypes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
+#include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -375,7 +377,7 @@ static void addBarrier(func::FuncOp funcOp, Operation *alloc,
     return;
   OpBuilder builder(alloc);
   // TODO: make it a option if needed.
-  bool hasAsyncCopies = true;
+  bool hasAsyncCopies = false;
   if (hasAsyncCopies) {
     Value groupToken = builder.create<nvgpu::DeviceAsyncCreateGroupOp>(
         funcOp.getLoc(), nvgpu::DeviceAsyncTokenType::get(funcOp.getContext()),
@@ -386,7 +388,126 @@ static void addBarrier(func::FuncOp funcOp, Operation *alloc,
   builder.create<gpu::BarrierOp>(alloc->getLoc());
 }
 
+// /// Return all operations within `parentOp` that read from or write to
+// /// `shmMemRef`.
+// static linalg::GenericOp getShmWriteOps(Operation *parentOp) {
+//   linalg::GenericOp copy;
+//   parentOp->walk([&](linalg::GenericOp copyOp) {
+//     // Is input in shared mem.
+//     if (copyOp.getNumDpsInputs() != 1) {
+//       return;
+//     }
+//     auto in = copyOp.getDpsInputOperand(0)->get();
+//     auto inMemref = dyn_cast<MemRefType>(in.getType());
+//     if (!inMemref) {
+//       return;
+//     }
+//
+//     auto inSpace =
+//     dyn_cast<gpu::AddressSpaceAttr>(inMemref.getMemorySpace()); if (!inSpace)
+//     {
+//       return;
+//     }
+//     if (inSpace.getValue() != gpu::AddressSpace::Workgroup) {
+//       return;
+//     }
+//
+//     // Is output in global mem.
+//     if (copyOp.getNumDpsInits() != 1) {
+//       return;
+//     }
+//     auto out = copyOp.getDpsInitOperand(0)->get();
+//     auto outMemref = dyn_cast<MemRefType>(out.getType());
+//     if (!outMemref) {
+//       return;
+//     }
+//
+//     auto outSpace =
+//         dyn_cast<IREE::HAL::DescriptorTypeAttr>(outMemref.getMemorySpace());
+//     if (!outSpace) {
+//       return;
+//     }
+//     if (outSpace.getValue() != IREE::HAL::DescriptorType::StorageBuffer) {
+//       return;
+//     }
+//
+//     copy = copyOp;
+//   });
+//
+//   return copy;
+// }
+
+// void tileLDSForGlobalWrite(func::FuncOp funcOp) {
+//   // Find Shared --> Global memory ops.
+//   Operation *op = getShmWriteOps(funcOp);
+//
+//   OpBuilder builder(funcOp);
+//   IRRewriter rewriter(builder);
+//
+//   auto tilingInt = dyn_cast<TilingInterface>(op);
+//   (void)tilingInt;
+//   if (!tilingInt) {
+//     return;
+//   }
+//
+//   scf::SCFTilingOptions options;
+//   options.setTileSizes({16, 16});
+//   auto maybeScfFor = scf::tileUsingSCFForOp(rewriter, tilingInt, options);
+//
+//   if (failed(maybeScfFor))
+//     return;
+//
+//   auto tilingRes = maybeScfFor.value();
+//   rewriter.replaceOp(op, tilingRes.tiledOps);
+//   funcOp.dump();
+//}
+
+void tileBigBuffers(func::FuncOp funcOp) {
+  funcOp.walk([](memref::AllocOp alloc) {
+    if (IREE::Util::getRoundedPhysicalStorageSize(alloc.getMemref().getType()) >
+        32768) {
+
+      auto memrefType = alloc.getMemref().getType();
+      auto shapes = memrefType.getShape();
+      assert(shapes.size() == 2);
+
+      unsigned tileX = shapes[0] / 4;
+      unsigned tileY = shapes[1] / 4;
+
+      // Create a tiled buffer allocation.
+      OpBuilder builder(alloc);
+      IRRewriter rewriter(builder);
+      auto newAlloc = builder.create<memref::AllocOp>(
+          alloc.getLoc(),
+          MemRefType::get({tileX, tileY}, memrefType.getElementType(),
+                          memrefType.getLayout(), memrefType.getMemorySpace()));
+
+      newAlloc.dump();
+
+      // Materialize the uses of the original alloc with new allocs.
+      auto users = alloc->getUsers();
+
+      vector::TransferWriteOp vgprToLDS;
+      linalg::GenericOp ldsToGlobal;
+
+      for (auto user : users) {
+        if (auto transferWrite = dyn_cast<vector::TransferWriteOp>(user)) {
+          vgprToLDS = transferWrite;
+        } else if (auto linalgOp = dyn_cast<linalg::GenericOp>(user)) {
+          ldsToGlobal = linalgOp;
+        }
+      }
+
+      auto tilingInt = dyn_cast<TilingInterface>(vgprToLDS);
+      scf::SCFTilingOptions options;
+    }
+  });
+}
+
 void packSharedMemoryAlloc(func::FuncOp funcOp) {
+  tileBigBuffers(funcOp);
+  return;
+
   DominanceInfo dominators(funcOp);
   SmallVector<Operation *> allocs;
   funcOp.walk([&](memref::AllocOp alloc) {
