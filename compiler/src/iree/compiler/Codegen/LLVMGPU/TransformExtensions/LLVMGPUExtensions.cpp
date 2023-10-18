@@ -765,6 +765,7 @@ DiagnosedSilenceableFailure transform_dialect::PromoteOperandsOp::applyToOne(
   OpBuilder::InsertionGuard g(rewriter);
   rewriter.setInsertionPoint(target);
   SmallVector<int64_t> indices = llvm::to_vector(getIndices());
+  bool copy = getCopy();
   int64_t numOperands = target->getNumOperands();
 
   results.push_back(target);
@@ -772,7 +773,7 @@ DiagnosedSilenceableFailure transform_dialect::PromoteOperandsOp::applyToOne(
   for (int64_t index : indices) {
     if ((index >= 0) && (index < numOperands)) {
       FailureOr<Value> ret = bufferization::allocateTensorForShapedValue(
-          rewriter, loc, target->getOperand(index), false, options, true);
+          rewriter, loc, target->getOperand(index), true, options, copy);
       if (failed(ret)) {
         return emitDefaultDefiniteFailure(target)
                << "failed to promote operand";
@@ -805,7 +806,7 @@ DiagnosedSilenceableFailure transform_dialect::PromoteResultsOp::applyToOne(
   for (int64_t index : indices) {
     if ((index >= 0) && (index < numResults)) {
       FailureOr<Value> ret = bufferization::allocateTensorForShapedValue(
-          rewriter, loc, target->getResult(index), false, options, true);
+          rewriter, loc, target->getResult(index), true, options, true);
       if (failed(ret)) {
         return emitDefaultDefiniteFailure(target) << "failed to promote result";
       }

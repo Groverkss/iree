@@ -389,7 +389,8 @@ def PromoteOperandsOp :
   }];
 
   let arguments = (ins TransformHandleTypeInterface:$target,
-                   DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$indices);
+                   DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$indices,
+                   UnitAttr:$copy);
   let results = (outs Variadic<TransformHandleTypeInterface>:$result);
 
   let assemblyFormat = [{ $target $indices attr-dict `:` functional-type(operands, results)}];
