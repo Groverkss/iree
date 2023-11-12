@@ -18,21 +18,46 @@ namespace iree_compiler {
 
 enum class Enforcement {
   Uninitialized = 0,
-  NeedsEnforcement = 1,
-  Enforced = 2
+  WeaklyEnforced = 1,
+  StronglyEnforced = 2,
+};
+
+struct AffineMapLayout {
+  bool operator==(const AffineMapLayout &rhs) {
+    return state == rhs.state && layout == rhs.layout;
+  }
+
+  bool operator!=(const AffineMapLayout &rhs) { return !(*this == rhs); }
+
+  Enforcement state = Enforcement::Uninitialized;
+  /// (new vector dims)[gpu syms] -> (old vector dims)
+  AffineMap layout;
 };
 
 class DistributionLayout : public AnalysisState {
 public:
   explicit DistributionLayout(Value val) : AnalysisState(val) {}
 
-  ChangeResult resolve(const DistributionLayout *rhs);
+  Enforcement getState() const { return vectorLayout.state; }
+  AffineMap getLayout() const { return vectorLayout.layout; }
 
-  bool isUninitialized() const { return state == Enforcement::Uninitialized; }
+  void setState(Enforcement state) { vectorLayout.state = state; }
+  void setLayout(AffineMap map) { vectorLayout.layout = map; }
+
+  ChangeResult resolve(const DistributionLayout *rhs);
+  ChangeResult resolve(const AffineMapLayout rhs);
+
+  bool isUninitialized() const {
+    return getState() == Enforcement::Uninitialized;
+  }
 
   /// Compare two states.
   bool operator==(const DistributionLayout &rhs) const {
-    return state == rhs.state && layout == rhs.layout;
+    return vectorLayout.state == rhs.vectorLayout.state &&
+           vectorLayout.layout == rhs.vectorLayout.layout;
+  }
+  bool operator!=(const DistributionLayout &rhs) const {
+    return !(*this == rhs);
   }
 
   void print(raw_ostream &os) const override;
@@ -51,11 +76,9 @@ public:
     enforcement = analysis;
   }
 
-  /// (new vector dims)[gpu syms] -> (old vector dims)
-  AffineMap layout;
-  Enforcement state = Enforcement::Uninitialized;
-
 private:
+  AffineMapLayout vectorLayout;
+
   /// A set of analyses that should be updated when this lattice changes.
   DataFlowAnalysis *propagation = nullptr;
   DataFlowAnalysis *enforcement = nullptr;

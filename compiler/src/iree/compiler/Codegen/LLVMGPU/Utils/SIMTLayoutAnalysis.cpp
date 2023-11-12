@@ -17,39 +17,56 @@
 using namespace mlir;
 using namespace mlir::iree_compiler;
 
-ChangeResult DistributionLayout::resolve(const DistributionLayout *rhs) {
+ChangeResult DistributionLayout::resolve(AffineMapLayout rhs) {
+  AffineMapLayout lhs = vectorLayout;
+
   // If both layouts are same, do nothing.
-  if (*this == *rhs) {
+  if (lhs == rhs) {
     return ChangeResult::NoChange;
   }
 
   // Take the more restrictive enforcement.
-  if (state < rhs->state) {
-    state = rhs->state;
-    layout = rhs->layout;
+  if (lhs.state < rhs.state) {
+    setState(rhs.state);
+    setLayout(rhs.layout);
     return ChangeResult::Change;
+  } else if (lhs.state > rhs.state) {
+    return ChangeResult::NoChange;
   }
 
+  // From here, both are in the same state, but have different layouts.
+
+  // WeaklyEnforced layouts don't need to be resolved.
+  if (lhs.state == Enforcement::WeaklyEnforced) {
+    return ChangeResult::NoChange;
+  }
+
+  // StronglyEnforced layouts need to be resolved.
   // Layouts have a conflict. Insert a layout resolution operation.
-  llvm::errs() << "Layout conflict: " << *this << " vs " << *rhs << "\n";
+  llvm::errs() << "Layout conflict at: " << *this << "\n";
   assert(false && "Layout conflict");
 }
 
+ChangeResult DistributionLayout::resolve(const DistributionLayout *rhs) {
+  return resolve(rhs->vectorLayout);
+}
+
 void DistributionLayout::print(raw_ostream &os) const {
-  if (state == Enforcement::Uninitialized) {
+  switch (getState()) {
+  case Enforcement::Uninitialized:
     os << "Uninitialized";
-    return;
+    break;
+  case Enforcement::WeaklyEnforced:
+    os << "WeaklyEnforced";
+    break;
+  case Enforcement::StronglyEnforced:
+    os << "StronglyEnforced";
+    break;
+    break;
   }
 
-  if (state == Enforcement::NeedsEnforcement) {
-    os << "NeedsEnforcement";
-    return;
-  }
-
-  if (state == Enforcement::Enforced) {
-    os << "Enforced: "
-       << " -> " << layout;
-    return;
+  if (getState() != Enforcement::Uninitialized) {
+    os << " " << getLayout();
   }
 }
 
@@ -57,12 +74,10 @@ void DistributionLayout::onUpdate(DataFlowSolver *solver) const {
   AnalysisState::onUpdate(solver);
 
   Value value = point.get<Value>();
-  LLVM_DEBUG(llvm::dbgs() << "onUpdate: " << value << "\n");
 
   if (propagation) {
     // Make propagation run again on all users of this value.
     for (Operation *user : value.getUsers()) {
-      LLVM_DEBUG(llvm::dbgs() << "Enqueing on PROPAGATION: " << *user << "\n");
       solver->enqueue({user, propagation});
     }
     // TODO: Maybe we need to run it on the parent operation as well to give
@@ -73,14 +88,11 @@ void DistributionLayout::onUpdate(DataFlowSolver *solver) const {
   if (enforcement) {
     // Make enforcement run on the parent operation.
     if (Operation *definingOp = value.getDefiningOp()) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Enqueing on ENFORCEMENT: " << *definingOp << "\n");
       solver->enqueue({definingOp, enforcement});
     }
     // Enforce users of this value also, as some other operands may need to
     // be updated.
     for (Operation *user : value.getUsers()) {
-      LLVM_DEBUG(llvm::dbgs() << "Enqueing on ENFORCEMENT: " << *user << "\n");
       solver->enqueue({user, enforcement});
     }
   }
@@ -92,16 +104,13 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
     if (auto contractOp = dyn_cast<vector::ContractionOp>(traversed)) {
       Value returnVal = contractOp.getResult();
       DistributionLayout *layout = getLatticeElement(returnVal);
-      layout->state = Enforcement::Enforced;
+      layout->setState(Enforcement::StronglyEnforced);
 
       AffineExpr d0;
       bindDims(ctx, d0);
-      layout->layout = AffineMap::get(/*newRank=*/2,
-                                      /*gpuSums=*/3, {d0, d0}, ctx);
-
-      LLVM_DEBUG(llvm::dbgs() << "contract prop\n");
+      layout->setLayout(AffineMap::get(/*newRank=*/2,
+                                       /*gpuSums=*/3, {d0, d0}, ctx));
       propagateIfChanged(layout, ChangeResult::Change);
-      LLVM_DEBUG(llvm::dbgs() << "contract prop end\n");
     }
 
     visitOperation(traversed);
@@ -138,12 +147,6 @@ void PropagateLayout::visitOperation(Operation *op) {
     return;
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "visiting operation: " << *op << "\n");
-
-  for (auto *resultLattice : resultLattices) {
-    LLVM_DEBUG(llvm::dbgs() << "result lattice: " << *resultLattice << "\n");
-  }
-
   // Grab the lattice elements of the operands.
   SmallVector<const DistributionLayout *> operandLattices;
   operandLattices.reserve(op->getNumOperands());
@@ -153,7 +156,6 @@ void PropagateLayout::visitOperation(Operation *op) {
     }
 
     DistributionLayout *operandLattice = getLatticeElement(operand);
-    LLVM_DEBUG(llvm::dbgs() << "operand lattice: " << *operandLattice << "\n");
     operandLattices.push_back(operandLattice);
   }
 
@@ -207,14 +209,6 @@ void EnforceLayout::visitOperation(Operation *op) {
     return;
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "ENFORCEMENT: visiting operation: " << *op
-                          << "\n");
-
-  for (auto *operandLattice : operandLattices) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "ENFORCEMENT: operand lattice: " << *operandLattice << "\n");
-  }
-
   // Get the result lattices.
   SmallVector<const DistributionLayout *> resultLattices;
   resultLattices.reserve(op->getNumResults());
@@ -224,8 +218,6 @@ void EnforceLayout::visitOperation(Operation *op) {
     }
 
     DistributionLayout *resultLattice = getLatticeElement(result);
-    LLVM_DEBUG(llvm::dbgs()
-               << "ENFORCEMENT: result lattice: " << *resultLattice << "\n");
     resultLattices.push_back(resultLattice);
   }
 
