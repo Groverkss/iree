@@ -15,6 +15,8 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Matchers.h"
 
+#include "./SIMTLayoutAnalysis.h"
+
 #define DEBUG_TYPE "iree-llvmgpu-layout-analysis-and-distribution"
 
 namespace mlir::iree_compiler {
@@ -1280,6 +1282,27 @@ static bool isMatmulTransposeB(vector::ContractionOp contractOp) {
 
 void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
                                      func::FuncOp funcOp) {
+  DataFlowSolver solver;
+  solver.load<PropagateLayout>(funcOp.getContext());
+  if (failed(solver.initializeAndRun(funcOp))) {
+    llvm::errs() << "failed to run dataflow solver\n";
+    return;
+  }
+
+  funcOp.walk([&](Operation *op) {
+    if (op->getNumResults() == 0)
+      return;
+    Value result = op->getResult(0);
+    const DistributionLayout *layout =
+        solver.lookupState<DistributionLayout>(result);
+    if (layout && !layout->isUninitialized()) {
+      op->setAttr("layout", AffineMapAttr::get(layout->layout));
+    }
+  });
+
+  llvm::errs() << "success\n";
+  return;
+
   // First walk through all the MMA ops and set their layouts
   DenseMap<Value, Layout> layoutMap;
   funcOp.walk([&](Operation *op) {
