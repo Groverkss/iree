@@ -1283,8 +1283,11 @@ static bool isMatmulTransposeB(vector::ContractionOp contractOp) {
 void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
                                      func::FuncOp funcOp) {
   DataFlowSolver solver;
-  solver.load<PropagateLayout>(funcOp.getContext());
+  // The order of loading matters here, because propagateLayout does some
+  // initialization which needs the lattice to know both enforcement and
+  // propagation.
   solver.load<EnforceLayout>(funcOp.getContext());
+  solver.load<PropagateLayout>(funcOp.getContext());
   if (failed(solver.initializeAndRun(funcOp))) {
     llvm::errs() << "failed to run dataflow solver\n";
     return;
@@ -1297,7 +1300,7 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
     const DistributionLayout *layout =
         solver.lookupState<DistributionLayout>(result);
     if (layout && !layout->isUninitialized()) {
-      op->setAttr("layout", AffineMapAttr::get(layout->layout));
+      op->setAttr("layout", AffineMapAttr::get(layout->getLayout()));
     }
   });
 
