@@ -17,8 +17,6 @@
 
 #include "./SIMTLayoutAnalysis.h"
 
-#define DEBUG_TYPE "iree-llvmgpu-layout-analysis-and-distribution"
-
 namespace mlir::iree_compiler {
 
 namespace {
@@ -1284,6 +1282,7 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
                                      func::FuncOp funcOp) {
   DataFlowSolver solver;
   solver.load<PropagateLayout>(funcOp.getContext());
+  solver.load<EnforceLayout>(funcOp.getContext());
   if (failed(solver.initializeAndRun(funcOp))) {
     llvm::errs() << "failed to run dataflow solver\n";
     return;
