@@ -171,10 +171,13 @@ static void propagateLayoutToTransposeOp(
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
 
-  AffineMap oldLayout = value->getLayout();
-  AffineMap newLayout =
-      oldLayout.getPermutationMap(permutation, oldLayout.getContext())
-          .compose(oldLayout);
+  AffineMap oldLayout = result->getLayout();
+  AffineMap permuteMap =
+      oldLayout.getPermutationMap(permutation, oldLayout.getContext());
+  // Permute old vector dims.
+  AffineMap newLayout = permuteMap.compose(oldLayout);
+  // Permute new vector dims.
+  newLayout = newLayout.compose(permuteMap);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = result->resolve({value->getState(), newLayout});
@@ -203,6 +206,8 @@ void iree_compiler::propagationTransferFunction(
                                  update);
     return;
   }
+
+  // TODO: Speculative propagation for broadcasts can be added here.
 
   return;
 }
@@ -286,12 +291,64 @@ static void enforceLayoutToTransposeOp(
   }
 
   AffineMap oldLayout = result->getLayout();
-  AffineMap newLayout =
-      oldLayout.getPermutationMap(permutation, oldLayout.getContext())
-          .compose(oldLayout);
+  AffineMap permuteMap =
+      oldLayout.getPermutationMap(permutation, oldLayout.getContext());
+  // Permute old vector dims.
+  AffineMap newLayout = permuteMap.compose(oldLayout);
+  // Permute new vector dims.
+  newLayout = newLayout.compose(permuteMap);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = value->resolve({result->getState(), newLayout});
+  update(value, changed);
+}
+
+static void enforceLayoutToBroadcastOp(
+    vector::BroadcastOp broadcast,
+    ArrayRef<DistributionLayout *> operandLattices,
+    ArrayRef<const DistributionLayout *> resultLattices,
+    std::function<void(DistributionLayout *, ChangeResult)> update) {
+  // Broadcast has only one vector result.
+  const DistributionLayout *result = resultLattices[0];
+  // Broadcast has only one vector operand.
+  DistributionLayout *value = operandLattices[0];
+
+  // Cannot enforce layout if result is uninitialized.
+  if (result->isUninitialized()) {
+    return;
+  }
+
+  // Build broadcasted layout, essentially a reduced layout along the trailing
+  // dimensions.
+
+  // Ensure that there are no broadcasted unit dims as we do not know how to
+  // handle them as of now.
+  assert(broadcast.computeBroadcastedUnitDims().size() == 0 &&
+         "Streching in broadcasting not implemented yet.");
+  // The starting k dimensions of the result are the ones that need to be
+  // projected out.
+
+  auto resultShape = broadcast.getResultVectorType().getShape();
+  auto inputType = broadcast.getSourceType();
+  assert(inputType.isa<VectorType>() &&
+         "Scalar broadcast not supported for now.");
+  auto inputShape = inputType.cast<VectorType>().getShape();
+
+  SmallBitVector reductionMaskBV(resultShape.size(), /*initVal=*/false);
+  // Set the trailing dimensions to be reduced.
+  int64_t resultDiff = resultShape.size() - inputShape.size();
+  assert(resultDiff >= 0 && "Result shape cannot be smaller than input shape");
+  for (int64_t i = 0; i < resultDiff; ++i) {
+    reductionMaskBV.set(i);
+  }
+
+  AffineMap resultLayout = result->getLayout();
+  resultLayout =
+      projectDims(resultLayout, reductionMaskBV, /*compressDims=*/true);
+  resultLayout = resultLayout.getMinorSubMap(inputShape.size());
+
+  // Try to enforce the reduced result layout to the input.
+  ChangeResult changed = value->resolve({result->getState(), resultLayout});
   update(value, changed);
 }
 
@@ -314,6 +371,12 @@ void iree_compiler::enforcementTransferFunction(
 
   if (auto transpose = dyn_cast<vector::TransposeOp>(op)) {
     enforceLayoutToTransposeOp(transpose, operandLattices, resultLattices,
+                               update);
+    return;
+  }
+
+  if (auto broadcast = dyn_cast<vector::BroadcastOp>(op)) {
+    enforceLayoutToBroadcastOp(broadcast, operandLattices, resultLattices,
                                update);
     return;
   }

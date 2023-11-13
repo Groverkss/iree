@@ -44,6 +44,7 @@ ChangeResult DistributionLayout::resolve(AffineMapLayout rhs) {
   // StronglyEnforced layouts need to be resolved.
   // Layouts have a conflict. Insert a layout resolution operation.
   llvm::errs() << "Layout conflict at: " << *this << "\n";
+  llvm::errs() << "With: " << rhs.layout << "\n";
   assert(false && "Layout conflict");
 }
 
@@ -103,14 +104,40 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
     // If we see a vector.contract, we enforcement it.
     if (auto contractOp = dyn_cast<vector::ContractionOp>(traversed)) {
       Value returnVal = contractOp.getResult();
-      DistributionLayout *layout = getLatticeElement(returnVal);
-      layout->setState(Enforcement::StronglyEnforced);
+      DistributionLayout *result = getLatticeElement(returnVal);
 
-      AffineExpr d0;
-      bindDims(ctx, d0);
-      layout->setLayout(AffineMap::get(/*newRank=*/2,
-                                       /*gpuSums=*/3, {d0, d0}, ctx));
-      propagateIfChanged(layout, ChangeResult::Change);
+      // Get all vector operands of the contract.
+      SmallVector<DistributionLayout *> operands;
+      operands.reserve(contractOp.getNumOperands());
+      for (Value operand : contractOp.getOperands()) {
+        if (isa<VectorType>(operand.getType())) {
+          operands.push_back(getLatticeElement(operand));
+        }
+      }
+
+      AffineExpr d0, d1, gpux, gpuy, gpuz;
+      bindDims(ctx, d0, d1);
+      bindSymbols(ctx, gpux, gpuy, gpuz);
+
+      AffineMap nvidiaMMASyncLayout =
+          AffineMap::get(/*newRank=*/2, /*symbolCount=*/3,
+                         {
+                             gpuy + (8 * d0.floorDiv(2)),
+                             gpux + (8 * d1.floorDiv(2)) + (d1 % 2),
+                         },
+                         ctx);
+
+      // Set result layout.
+      result->setState(Enforcement::StronglyEnforced);
+      result->setLayout(nvidiaMMASyncLayout);
+      propagateIfChanged(result, ChangeResult::Change);
+
+      // Set operand layouts.
+      for (DistributionLayout *operand : operands) {
+        operand->setState(Enforcement::StronglyEnforced);
+        operand->setLayout(nvidiaMMASyncLayout);
+        propagateIfChanged(operand, ChangeResult::Change);
+      }
     }
 
     visitOperation(traversed);
