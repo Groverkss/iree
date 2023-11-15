@@ -12,6 +12,21 @@ using namespace llvm;
 using namespace mlir;
 using namespace mlir::iree_compiler;
 
+/// Get OpOperand from an operation and the lattice index, which is basically
+/// the x^th operand of vector type.
+static OpOperand &getOpOperand(Operation *op, unsigned operandLatticeIndex) {
+  unsigned operandIndex = 0;
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (operand.get().getType().isa<VectorType>()) {
+      if (operandIndex == operandLatticeIndex) {
+        return operand;
+      }
+      operandIndex++;
+    }
+  }
+  llvm_unreachable("No vector operand found");
+}
+
 /// Get a layout if everyone agrees on the same layout.
 static DistributionLayout *
 getAgreedLayout(ArrayRef<DistributionLayout *> layouts) {
@@ -45,7 +60,7 @@ getAgreedLayout(ArrayRef<const DistributionLayout *> layouts) {
 
 /// Given a list of layouts, agree on a single layout for all of them.
 static void enforceSameLayout(
-    ArrayRef<DistributionLayout *> layouts,
+    Operation *op, ArrayRef<DistributionLayout *> layouts,
     std::function<void(DistributionLayout *, ChangeResult)> update) {
   // TODO: Use the most common layout here.
   // Get the highest enforced layout.
@@ -61,8 +76,10 @@ static void enforceSameLayout(
   }
 
   if (chosenOperandLayout != nullptr) {
-    for (DistributionLayout *lattice : layouts) {
-      ChangeResult changed = lattice->resolve(chosenOperandLayout);
+    for (auto [index, lattice] : llvm::enumerate(layouts)) {
+      OpOperand &opOperand = getOpOperand(op, index);
+      ChangeResult changed =
+          lattice->resolveWithPossibleConflict(chosenOperandLayout, opOperand);
       update(lattice, changed);
     }
   }
@@ -201,8 +218,9 @@ static void enforceLayoutToElementwiseOp(
   // Try to enforce the layout of the result on operands.
   const DistributionLayout *result = resultLattices[0];
   if (!result->isUninitialized()) {
-    for (DistributionLayout *operandLattice : operandLattices) {
-      ChangeResult changed = operandLattice->resolve(result);
+    for (auto [index, operandLattice] : llvm::enumerate(operandLattices)) {
+      ChangeResult changed = operandLattice->resolveWithPossibleConflict(
+          result, getOpOperand(op, index));
       update(operandLattice, changed);
     }
   }
@@ -212,7 +230,7 @@ static void enforceLayoutToElementwiseOp(
   // enforced layout, it would have enforced its layout on every operand. This
   // is just to handle cases where results have a uninitialized/weakly enforced
   // layout.
-  enforceSameLayout(operandLattices, update);
+  enforceSameLayout(op, operandLattices, update);
 }
 
 static void enforceLayoutToMultiReductionOp(
