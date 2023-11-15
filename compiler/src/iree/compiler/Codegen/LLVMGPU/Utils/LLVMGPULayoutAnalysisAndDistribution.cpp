@@ -1301,6 +1301,11 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
     if (layout && !layout->isUninitialized()) {
       op->setAttr("layout",
                   AffineMapAttr::get(layout->getInnerLayout().getMap()));
+      ArrayRef<int64_t> simtShape = layout->getInnerLayout().getSimtShape();
+      if (!simtShape.empty()) {
+        SmallVector<int64_t> simtShapeAttr(simtShape.begin(), simtShape.end());
+        op->setAttr("simt_shape", rewriter.getI64ArrayAttr(simtShapeAttr));
+      }
     }
   });
 
