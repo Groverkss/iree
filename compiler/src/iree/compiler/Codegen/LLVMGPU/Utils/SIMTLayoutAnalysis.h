@@ -22,30 +22,89 @@ enum class Enforcement {
   StronglyEnforced = 2,
 };
 
-struct AffineMapLayout {
-  bool operator==(const AffineMapLayout &rhs) {
-    return state == rhs.state && layout == rhs.layout;
+class AffineMapLayout {
+public:
+  AffineMapLayout() = default;
+
+  explicit AffineMapLayout(AffineMap layout, ArrayRef<int64_t> oldShapes)
+      : layout(layout), oldShapes(oldShapes) {}
+
+  bool operator==(const AffineMapLayout &rhs) const {
+    return layout == rhs.layout && oldShapes == rhs.oldShapes;
+  }
+  bool operator!=(const AffineMapLayout &rhs) const { return !(*this == rhs); }
+
+  AffineMap getMap() const { return layout; }
+
+  AffineMapLayout permute(ArrayRef<unsigned> permutation) const {
+    AffineMap oldLayout = layout;
+    AffineMap permuteMap =
+        oldLayout.getPermutationMap(permutation, oldLayout.getContext());
+    // Permute old vector dims.
+    AffineMap newLayout = permuteMap.compose(oldLayout);
+    // Permute new vector dims.
+    newLayout = newLayout.compose(permuteMap);
+    // Permute the shapes.
+    SmallVector<int64_t> newOldShapes(oldShapes.size());
+    for (unsigned i = 0, e = permutation.size(); i < e; ++i) {
+      newOldShapes[i] = oldShapes[permutation[i]];
+    }
+    return AffineMapLayout(newLayout, newOldShapes);
   }
 
-  bool operator!=(const AffineMapLayout &rhs) { return !(*this == rhs); }
+  AffineMapLayout project(ArrayRef<bool> projectedDims) {
+    // Get a new affine map with these dimensions projected out and these
+    // results projected out.
 
-  Enforcement state = Enforcement::Uninitialized;
+    llvm::SmallBitVector reductionMaskBV(projectedDims.size());
+    SmallVector<unsigned> unreducedPos;
+    for (unsigned i = 0, e = projectedDims.size(); i < e; ++i) {
+      if (projectedDims[i]) {
+        reductionMaskBV = reductionMaskBV.set(i);
+      } else {
+        unreducedPos.push_back(i);
+      }
+    }
+
+    AffineMap newLayout =
+        projectDims(layout, reductionMaskBV, /*compressDims=*/true);
+    newLayout = newLayout.getSubMap(unreducedPos);
+
+    // Project the shapes.
+    SmallVector<int64_t> newOldShapes;
+    for (unsigned i = 0, e = projectedDims.size(); i < e; ++i) {
+      if (!projectedDims[i]) {
+        newOldShapes.push_back(oldShapes[i]);
+      }
+    }
+    return AffineMapLayout(newLayout, newOldShapes);
+  }
+
+  friend raw_ostream &operator<<(raw_ostream &os,
+                                 const AffineMapLayout &layout) {
+    layout.print(os);
+    return os;
+  }
+
+  void print(raw_ostream &os) const { layout.print(os); }
+
+private:
   /// (new vector dims)[gpu syms] -> (old vector dims)
   AffineMap layout;
+  SmallVector<int64_t> oldShapes;
 };
 
 class DistributionLayout : public AnalysisState {
 public:
   explicit DistributionLayout(Value val) : AnalysisState(val) {}
 
-  Enforcement getState() const { return vectorLayout.state; }
-  AffineMap getLayout() const { return vectorLayout.layout; }
-
-  void setState(Enforcement state) { vectorLayout.state = state; }
-  void setLayout(AffineMap map) { vectorLayout.layout = map; }
+  Enforcement getState() const { return state; }
+  void setState(Enforcement state) { this->state = state; }
 
   ChangeResult resolve(const DistributionLayout *rhs);
-  ChangeResult resolve(const AffineMapLayout rhs);
+  ChangeResult resolve(Enforcement state, const AffineMapLayout rhs);
+
+  AffineMapLayout getInnerLayout() const { return vectorLayout; }
 
   bool isUninitialized() const {
     return getState() == Enforcement::Uninitialized;
@@ -53,8 +112,7 @@ public:
 
   /// Compare two states.
   bool operator==(const DistributionLayout &rhs) const {
-    return vectorLayout.state == rhs.vectorLayout.state &&
-           vectorLayout.layout == rhs.vectorLayout.layout;
+    return state == rhs.state && vectorLayout == rhs.vectorLayout;
   }
   bool operator!=(const DistributionLayout &rhs) const {
     return !(*this == rhs);
@@ -77,6 +135,9 @@ public:
   }
 
 private:
+  void setInnerLayout(const AffineMapLayout layout) { vectorLayout = layout; }
+
+  Enforcement state = Enforcement::Uninitialized;
   AffineMapLayout vectorLayout;
 
   /// A set of analyses that should be updated when this lattice changes.

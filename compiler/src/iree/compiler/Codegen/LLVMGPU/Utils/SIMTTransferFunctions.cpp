@@ -68,28 +68,6 @@ static void enforceSameLayout(
   }
 }
 
-static AffineMap getProjectedLayout(AffineMap oldLayout,
-                                    ArrayRef<bool> projectedDims) {
-  // Get a new affine map with these dimensions projected out and these results
-  // projected out.
-
-  SmallBitVector reductionMaskBV(projectedDims.size());
-  SmallVector<unsigned> unreducedPos;
-  for (unsigned i = 0, e = projectedDims.size(); i < e; ++i) {
-    if (projectedDims[i]) {
-      reductionMaskBV = reductionMaskBV.set(i);
-    } else {
-      unreducedPos.push_back(i);
-    }
-  }
-
-  AffineMap newLayout =
-      projectDims(oldLayout, reductionMaskBV, /*compressDims=*/true);
-  newLayout = newLayout.getSubMap(unreducedPos);
-
-  return newLayout;
-}
-
 /// =========================
 ///        PROPAGATION
 /// =========================
@@ -170,17 +148,11 @@ static void propagateLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-
-  AffineMap oldLayout = result->getLayout();
-  AffineMap permuteMap =
-      oldLayout.getPermutationMap(permutation, oldLayout.getContext());
-  // Permute old vector dims.
-  AffineMap newLayout = permuteMap.compose(oldLayout);
-  // Permute new vector dims.
-  newLayout = newLayout.compose(permuteMap);
+  AffineMapLayout permutedLayout =
+      result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
-  ChangeResult changed = result->resolve({value->getState(), newLayout});
+  ChangeResult changed = result->resolve(value->getState(), permutedLayout);
   update(result, changed);
 }
 
@@ -258,10 +230,10 @@ static void enforceLayoutToMultiReductionOp(
   // Try to make the init agree on the same layout as projected value.
   if (!value->isUninitialized()) {
     SmallVector<bool> reductionMask = multiReduce.getReductionMask();
-    AffineMap projectedLayout =
-        getProjectedLayout(value->getLayout(), reductionMask);
+    AffineMapLayout projectedLayout =
+        value->getInnerLayout().project(reductionMask);
     ChangeResult changedDueToValue =
-        init->resolve({value->getState(), projectedLayout});
+        init->resolve(value->getState(), projectedLayout);
     update(init, changedDueToResult | changedDueToValue);
   } else {
     update(init, changedDueToResult);
@@ -289,17 +261,11 @@ static void enforceLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-
-  AffineMap oldLayout = result->getLayout();
-  AffineMap permuteMap =
-      oldLayout.getPermutationMap(permutation, oldLayout.getContext());
-  // Permute old vector dims.
-  AffineMap newLayout = permuteMap.compose(oldLayout);
-  // Permute new vector dims.
-  newLayout = newLayout.compose(permuteMap);
+  AffineMapLayout permutedLayout =
+      result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
-  ChangeResult changed = value->resolve({result->getState(), newLayout});
+  ChangeResult changed = value->resolve(result->getState(), permutedLayout);
   update(value, changed);
 }
 
@@ -334,21 +300,17 @@ static void enforceLayoutToBroadcastOp(
          "Scalar broadcast not supported for now.");
   auto inputShape = inputType.cast<VectorType>().getShape();
 
-  SmallBitVector reductionMaskBV(resultShape.size(), /*initVal=*/false);
+  SmallVector<bool> reductionMask(resultShape.size(), false);
   // Set the trailing dimensions to be reduced.
   int64_t resultDiff = resultShape.size() - inputShape.size();
   assert(resultDiff >= 0 && "Result shape cannot be smaller than input shape");
   for (int64_t i = 0; i < resultDiff; ++i) {
-    reductionMaskBV.set(i);
+    reductionMask[i] = true;
   }
 
-  AffineMap resultLayout = result->getLayout();
-  resultLayout =
-      projectDims(resultLayout, reductionMaskBV, /*compressDims=*/true);
-  resultLayout = resultLayout.getMinorSubMap(inputShape.size());
-
-  // Try to enforce the reduced result layout to the input.
-  ChangeResult changed = value->resolve({result->getState(), resultLayout});
+  AffineMapLayout resultLayout =
+      result->getInnerLayout().project(reductionMask);
+  ChangeResult changed = value->resolve(result->getState(), resultLayout);
   update(value, changed);
 }
 

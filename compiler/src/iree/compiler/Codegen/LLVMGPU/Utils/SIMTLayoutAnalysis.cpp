@@ -17,7 +17,8 @@
 using namespace mlir;
 using namespace mlir::iree_compiler;
 
-ChangeResult DistributionLayout::resolve(AffineMapLayout rhs) {
+ChangeResult DistributionLayout::resolve(Enforcement state,
+                                         const AffineMapLayout rhs) {
   AffineMapLayout lhs = vectorLayout;
 
   // If both layouts are same, do nothing.
@@ -26,30 +27,30 @@ ChangeResult DistributionLayout::resolve(AffineMapLayout rhs) {
   }
 
   // Take the more restrictive enforcement.
-  if (lhs.state < rhs.state) {
-    setState(rhs.state);
-    setLayout(rhs.layout);
+  if (this->state < state) {
+    setState(state);
+    setInnerLayout(rhs);
     return ChangeResult::Change;
-  } else if (lhs.state > rhs.state) {
+  } else if (this->state > state) {
     return ChangeResult::NoChange;
   }
 
   // From here, both are in the same state, but have different layouts.
 
   // WeaklyEnforced layouts don't need to be resolved.
-  if (lhs.state == Enforcement::WeaklyEnforced) {
+  if (this->state == Enforcement::WeaklyEnforced) {
     return ChangeResult::NoChange;
   }
 
   // StronglyEnforced layouts need to be resolved.
   // Layouts have a conflict. Insert a layout resolution operation.
   llvm::errs() << "Layout conflict at: " << *this << "\n";
-  llvm::errs() << "With: " << rhs.layout << "\n";
+  llvm::errs() << "With: " << rhs << "\n";
   assert(false && "Layout conflict");
 }
 
 ChangeResult DistributionLayout::resolve(const DistributionLayout *rhs) {
-  return resolve(rhs->vectorLayout);
+  return resolve(rhs->state, rhs->vectorLayout);
 }
 
 void DistributionLayout::print(raw_ostream &os) const {
@@ -67,7 +68,7 @@ void DistributionLayout::print(raw_ostream &os) const {
   }
 
   if (getState() != Enforcement::Uninitialized) {
-    os << " " << getLayout();
+    os << " " << vectorLayout;
   }
 }
 
@@ -119,7 +120,7 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       bindDims(ctx, d0, d1);
       bindSymbols(ctx, gpux, gpuy, gpuz);
 
-      AffineMap nvidiaMMASyncLayout =
+      AffineMap nvidiaMMASyncLayoutA =
           AffineMap::get(/*newRank=*/2, /*symbolCount=*/3,
                          {
                              gpuy + (8 * d0.floorDiv(2)),
@@ -127,17 +128,31 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
                          },
                          ctx);
 
-      // Set result layout.
-      result->setState(Enforcement::StronglyEnforced);
-      result->setLayout(nvidiaMMASyncLayout);
-      propagateIfChanged(result, ChangeResult::Change);
+      AffineMap nvidiaMMASyncLayoutB =
+          AffineMap::get(/*newRank=*/2, /*symbolCount=*/3,
+                         {
+                             gpuy,
+                             gpux + (8 * d1.floorDiv(2)) + (d1 % 2),
+                         },
+                         ctx);
 
+      // Get shapes for A, B, C matrix.
+      auto aShape = contractOp.getLhsType().cast<ShapedType>().getShape();
+      auto bShape = contractOp.getRhsType().cast<ShapedType>().getShape();
+      auto cShape = contractOp.getResultType().cast<ShapedType>().getShape();
+
+      // Set result layout.
+      result->resolve(Enforcement::StronglyEnforced,
+                      AffineMapLayout(nvidiaMMASyncLayoutA, cShape));
       // Set operand layouts.
-      for (DistributionLayout *operand : operands) {
-        operand->setState(Enforcement::StronglyEnforced);
-        operand->setLayout(nvidiaMMASyncLayout);
-        propagateIfChanged(operand, ChangeResult::Change);
-      }
+      operands[0]->resolve(Enforcement::StronglyEnforced,
+                           AffineMapLayout(nvidiaMMASyncLayoutA, aShape));
+      operands[1]->resolve(Enforcement::StronglyEnforced,
+                           AffineMapLayout(nvidiaMMASyncLayoutB, bShape));
+      operands[2]->resolve(Enforcement::StronglyEnforced,
+                           AffineMapLayout(nvidiaMMASyncLayoutA, cShape));
+
+      propagateIfChanged(result, ChangeResult::Change);
     }
 
     visitOperation(traversed);

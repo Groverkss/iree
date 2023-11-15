@@ -1299,7 +1299,8 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
     const DistributionLayout *layout =
         solver.lookupState<DistributionLayout>(result);
     if (layout && !layout->isUninitialized()) {
-      op->setAttr("layout", AffineMapAttr::get(layout->getLayout()));
+      op->setAttr("layout",
+                  AffineMapAttr::get(layout->getInnerLayout().getMap()));
     }
   });
 
