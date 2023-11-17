@@ -207,9 +207,9 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
                          ctx);
 
       // Get shapes for A, B, C matrix.
-      ArrayRef<int64_t> aShape = {4, 2};
-      ArrayRef<int64_t> bShape = {2, 2};
-      ArrayRef<int64_t> cShape = {2, 2};
+      SmallVector<int64_t> aShape = {4, 2};
+      SmallVector<int64_t> bShape = {2, 2};
+      SmallVector<int64_t> cShape = {2, 2};
 
       // Set result layout.
       result->resolve(Enforcement::StronglyEnforced,
