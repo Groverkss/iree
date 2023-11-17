@@ -96,7 +96,6 @@ bool LayoutAttr::isValidLayout(ArrayRef<int64_t> shape) const {
 VectorLayoutInterface LayoutAttr::project(ArrayRef<bool> projectedDims) const {
   assert(projectedDims.size() == getLayouts().size() &&
          "projectedDims size must match layout size");
-
   ArrayRef<PerDimLayoutAttr> layouts = getLayouts();
   assert(projectedDims.size() == layouts.size());
   SmallVector<PerDimLayoutAttr> newLayouts;
@@ -112,7 +111,6 @@ VectorLayoutInterface LayoutAttr::project(ArrayRef<bool> projectedDims) const {
 VectorLayoutInterface LayoutAttr::permute(ArrayRef<int64_t> permutation) const {
   assert(permutation.size() == getLayouts().size() &&
          "permutation size must match layout size");
-
   ArrayRef<PerDimLayoutAttr> layouts = getLayouts();
   assert(permutation.size() == layouts.size());
   SmallVector<PerDimLayoutAttr> newLayouts;
