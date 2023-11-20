@@ -227,13 +227,34 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
               LayoutDimension::LANEX, LayoutDimension::VECTORY};
       shapes = {2, 4, 2};
       colLayout =
-          constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
+          constructLayout(canonicalShape[1], operandShapes[1][1], dims, shapes);
 
       layouts.clear();
       layouts.push_back(rowLayout);
       layouts.push_back(colLayout);
 
       LayoutAttr nvidiaMMASyncLayoutB =
+          LayoutAttr::get(op->getContext(), layouts);
+
+      // --------- C-matrix
+      canonicalShape = {16, 8};
+      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
+              LayoutDimension::VECTORY};
+      shapes = {8, 2};
+      rowLayout =
+          constructLayout(canonicalShape[0], operandShapes[2][0], dims, shapes);
+
+      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
+              LayoutDimension::LANEX, LayoutDimension::VECTORZ};
+      shapes = {2, 4, 1};
+      colLayout =
+          constructLayout(canonicalShape[1], operandShapes[2][1], dims, shapes);
+
+      layouts.clear();
+      layouts.push_back(rowLayout);
+      layouts.push_back(colLayout);
+
+      LayoutAttr nvidiaMMASyncLayoutC =
           LayoutAttr::get(op->getContext(), layouts);
 
 #else
@@ -264,11 +285,11 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
 #endif
 
       // Set result layout.
-      result->resolve(nvidiaMMASyncLayoutA);
+      result->resolve(nvidiaMMASyncLayoutC);
       // Set operand layouts.
       operands[0]->resolve(nvidiaMMASyncLayoutA);
       operands[1]->resolve(nvidiaMMASyncLayoutB);
-      operands[2]->resolve(nvidiaMMASyncLayoutA);
+      operands[2]->resolve(nvidiaMMASyncLayoutC);
 
       propagateIfChanged(result, ChangeResult::Change);
       propagateIfChanged(operands[0], ChangeResult::Change);
