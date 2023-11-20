@@ -12,6 +12,7 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
+#include "iree-dialects/Dialect/VectorExt/IR/VectorExtOps.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -26,6 +27,10 @@ enum class Enforcement {
   StronglyEnforced = 2,
 };
 
+#if 1
+using AffineMapLayout = IREE::VectorExt::LayoutAttr;
+SmallVector<int64_t> getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout);
+#else
 class AffineMapLayout {
 public:
   AffineMapLayout() = default;
@@ -98,6 +103,7 @@ private:
   AffineMap layout;
   SmallVector<int64_t> simtShape;
 };
+#endif
 
 class DistributionLayout : public AnalysisState {
 public:

@@ -11,11 +11,13 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
+#include "SIMTLayoutAnalysis.h"
 
 #define DEBUG_TYPE "iree-simt-layout-analysis"
 
 using namespace mlir;
 using namespace mlir::iree_compiler;
+using namespace mlir::iree_compiler::IREE::VectorExt;
 
 DistributionLayout::ResolutionResult
 DistributionLayout::doResolution(Enforcement state,
@@ -180,12 +182,69 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       // Get all vector operands of the contract.
       SmallVector<DistributionLayout *> operands;
       operands.reserve(contractOp.getNumOperands());
+      SmallVector<SmallVector<int64_t>> operandShapes;
       for (Value operand : contractOp.getOperands()) {
         if (isa<VectorType>(operand.getType())) {
           operands.push_back(getLatticeElement(operand));
+          SmallVector<int64_t> operandShape{cast<VectorType>(operand.getType()).getShape()};
+          operandShapes.push_back(operandShape);
         }
       }
 
+      #if 1
+
+      auto constructLayout = [&](int64_t canonicalShape,
+                                 int64_t vectorShape,
+                                 ArrayRef<LayoutDimension> dims,
+                                 SmallVectorImpl<int64_t> &shapes) {
+        int64_t batchDim = vectorShape / canonicalShape;
+        shapes.insert(shapes.begin(), batchDim);
+        SmallVector<LayoutDimensionAttr> labels;
+        auto toAttr = [&](LayoutDimension dim) {
+          return LayoutDimensionAttr::get(op->getContext(), dim);
+        };
+        std::transform(dims.begin(), dims.end(), std::back_inserter(labels), toAttr);
+        return PerDimLayoutAttr::get(op->getContext(), labels, shapes);
+      };
+
+      SmallVector<int64_t> canonicalShape;
+      SmallVector<LayoutDimension> dims;
+      SmallVector<int64_t> shapes;
+
+      // --------- A-matrix
+      // TODO: Get canonical shapes from instruction shape
+      canonicalShape = {16, 16};
+      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY, LayoutDimension::VECTORZ};
+      shapes = {8, 2};
+      PerDimLayoutAttr rowLayout = constructLayout(canonicalShape[0], operandShapes[0][0], dims, shapes);
+
+      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX, LayoutDimension::LANEX, LayoutDimension::VECTORY};
+      shapes = {2, 4, 2};
+      PerDimLayoutAttr colLayout = constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
+
+      SmallVector<PerDimLayoutAttr> layouts;
+      layouts.push_back(rowLayout);
+      layouts.push_back(colLayout);
+
+      LayoutAttr nvidiaMMASyncLayoutA = LayoutAttr::get(op->getContext(), layouts);
+
+      // --------- B-matrix
+      canonicalShape = {16, 8};
+      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY, LayoutDimension::VECTORZ};
+      shapes = {8, 1};
+      rowLayout = constructLayout(canonicalShape[0], operandShapes[1][0], dims, shapes);
+
+      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX, LayoutDimension::LANEX, LayoutDimension::VECTORY};
+      shapes = {2, 4, 2};
+      colLayout = constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
+
+      layouts.clear();
+      layouts.push_back(rowLayout);
+      layouts.push_back(colLayout);
+
+      LayoutAttr nvidiaMMASyncLayoutB = LayoutAttr::get(op->getContext(), layouts);
+
+      #else
       AffineExpr d0, d1, gpux, gpuy, gpuz;
       bindDims(ctx, d0, d1);
       bindSymbols(ctx, gpux, gpuy, gpuz);
@@ -210,17 +269,18 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       SmallVector<int64_t> aShape = {4, 2};
       SmallVector<int64_t> bShape = {2, 2};
       SmallVector<int64_t> cShape = {2, 2};
+      #endif
 
       // Set result layout.
       result->resolve(Enforcement::StronglyEnforced,
-                      AffineMapLayout(nvidiaMMASyncLayoutA, cShape));
+                      nvidiaMMASyncLayoutA);
       // Set operand layouts.
       operands[0]->resolve(Enforcement::StronglyEnforced,
-                           AffineMapLayout(nvidiaMMASyncLayoutA, aShape));
+                           nvidiaMMASyncLayoutA);
       operands[1]->resolve(Enforcement::StronglyEnforced,
-                           AffineMapLayout(nvidiaMMASyncLayoutB, bShape));
+                           nvidiaMMASyncLayoutB);
       operands[2]->resolve(Enforcement::StronglyEnforced,
-                           AffineMapLayout(nvidiaMMASyncLayoutA, cShape));
+                           nvidiaMMASyncLayoutA);
 
       propagateIfChanged(result, ChangeResult::Change);
     }
@@ -348,4 +408,20 @@ DistributionLayout *EnforceLayout::getLatticeElement(Value val) {
   // Subscribe this analysis to updates of the lattice.
   layout->subscribeEnforcement(this);
   return layout;
+}
+
+SmallVector<int64_t>
+mlir::iree_compiler::getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout) {
+  SmallVector<LayoutDimension> dims = {LayoutDimension::BATCHX,
+   LayoutDimension::BATCHY, LayoutDimension::VECTORZ,
+   LayoutDimension::VECTORY, LayoutDimension::VECTORX};
+  SmallVector<int64_t> shape = layout.getSIMTVectorShape(dims);
+  // TODO: After a projection, the shape could be smaller.
+  if (shape.size() < dims.size()) return shape;
+  assert(shape.size() == dims.size());
+  // Collapse VectorZ and VectorY dimensions. This is NVIDIA specific.
+  shape[2] *= shape[3];
+  shape[3] = shape[4];
+  shape.pop_back();
+  return shape;
 }
