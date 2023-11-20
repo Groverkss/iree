@@ -37,15 +37,6 @@ DistributionLayout::doResolution(const AffineMapLayout &rhs) {
   // Layouts conflict and need to be resolved.
   return ResolutionResult::Conflict;
 }
-/// Create an unregistered operation "resolve_conflict" to resolve this
-/// conflict.
-Operation *createResolutionOp(OpBuilder &builder, Value input) {
-  OperationState resolveOpState(input.getLoc(), "resolve_conflict");
-  resolveOpState.addOperands(input);
-  resolveOpState.addTypes(input.getType());
-  Operation *resolution = builder.create(resolveOpState);
-  return resolution;
-}
 
 ChangeResult
 DistributionLayout::resolveWithPossibleConflict(const AffineMapLayout &rhs,
@@ -65,7 +56,9 @@ DistributionLayout::resolveWithPossibleConflict(const AffineMapLayout &rhs,
   Value input = opOperand.get();
   // Create a resolution operation. This conflict should be handeled later by
   // someone else, not this analysis.
-  Operation *resolveOp = createResolutionOp(builder, input);
+  Operation *resolveOp =
+      builder.create<IREE ::VectorExt::LayoutConflictResolutionOp>(
+          input.getLoc(), input.getType(), input, vectorLayout, rhs);
   Value resolvedValue = resolveOp->getResult(0);
   opOperand.set(resolvedValue);
 
