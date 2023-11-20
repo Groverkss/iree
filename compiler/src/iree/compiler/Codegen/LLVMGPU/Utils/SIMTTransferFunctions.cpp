@@ -27,7 +27,8 @@ static OpOperand &getOpOperand(Operation *op, unsigned operandLatticeIndex) {
   llvm_unreachable("No vector operand found");
 }
 
-/// Get a layout if everyone agrees on the same layout.
+/// Get a layout if all the given layouts are same. If all layouts are not same,
+/// return nullptr.
 static DistributionLayout *
 getAgreedLayout(ArrayRef<DistributionLayout *> layouts) {
   if (layouts.size() == 0)
@@ -43,6 +44,8 @@ getAgreedLayout(ArrayRef<DistributionLayout *> layouts) {
   return layouts[0];
 }
 
+/// Get a layout if all the given layouts are same. If all layouts are not same,
+/// return nullptr.
 static const DistributionLayout *
 getAgreedLayout(ArrayRef<const DistributionLayout *> layouts) {
   if (layouts.size() == 0)
@@ -58,25 +61,24 @@ getAgreedLayout(ArrayRef<const DistributionLayout *> layouts) {
   return layouts[0];
 }
 
-/// Given a list of layouts, agree on a single layout for all of them.
-static void enforceSameLayout(
-    Operation *op, ArrayRef<DistributionLayout *> layouts,
+/// Given a list of layouts, enforce a single layout for all of them.
+/// The layout chosen is a heuristic that choses the first enforced layout.
+/// TODO: Use the most common layout to minimize the number of conflicts.
+static void enforceSameLayoutForOperands(
+    Operation *op, ArrayRef<DistributionLayout *> operands,
     std::function<void(DistributionLayout *, ChangeResult)> update) {
-  // TODO: Use the most common layout here.
-  // Get the highest enforced layout.
+  // Get any enforced layout.
   DistributionLayout *chosenOperandLayout = nullptr;
-  for (DistributionLayout *lattice : layouts) {
-    if (chosenOperandLayout == nullptr) {
+  for (DistributionLayout *lattice : operands) {
+    if (lattice->hasLayout()) {
       chosenOperandLayout = lattice;
-    } else {
-      if (chosenOperandLayout->getState() < lattice->getState()) {
-        chosenOperandLayout = lattice;
-      }
+      break;
     }
   }
 
-  if (chosenOperandLayout != nullptr) {
-    for (auto [index, lattice] : llvm::enumerate(layouts)) {
+  // Enforce the layout to other operands.
+  if (chosenOperandLayout) {
+    for (auto [index, lattice] : llvm::enumerate(operands)) {
       OpOperand &opOperand = getOpOperand(op, index);
       ChangeResult changed =
           lattice->resolveWithPossibleConflict(chosenOperandLayout, opOperand);
@@ -101,9 +103,10 @@ static void propagateLayoutToElementwiseOp(
 
   DistributionLayout *result = resultLattices[0];
 
-  // If result lattice already has a strongly enforced layout, we cannot do
+  // If result lattice already has a layout, we cannot do
   // anything. We do not impose layout conflicts on results.
-  if (result->getState() == Enforcement::StronglyEnforced) {
+  // TODO: Explore if this is actually needed.
+  if (result->hasLayout()) {
     return;
   }
 
@@ -128,9 +131,9 @@ static void propagateLayoutToMultiReductionOp(
   // Multi reduce has second operand as init.
   const DistributionLayout *init = operandLattices[1];
 
-  // If result lattice already has a strongly enforced layout, we cannot do
-  // anything. We do not impose layout conflicts on results.
-  if (result->getState() == Enforcement::StronglyEnforced) {
+  // If result lattice already has a layout, we cannot do anything. We do not
+  // impose layout conflicts on results.
+  if (result->hasLayout()) {
     return;
   }
 
@@ -148,9 +151,9 @@ static void propagateLayoutToTransposeOp(
   // Transpose has only one vector operand.
   const DistributionLayout *value = operandLattices[0];
 
-  // If result lattice already has a strongly enforced layout, we cannot do
-  // anything. We do not impose layout conflicts on results.
-  if (result->getState() == Enforcement::StronglyEnforced) {
+  // If result lattice already has a layout, we cannot do anything. We do not
+  // impose layout conflicts on results.
+  if (result->hasLayout()) {
     return;
   }
 
@@ -169,7 +172,7 @@ static void propagateLayoutToTransposeOp(
       result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
-  ChangeResult changed = result->resolve(value->getState(), permutedLayout);
+  ChangeResult changed = result->resolve(permutedLayout);
   update(result, changed);
 }
 
@@ -195,8 +198,6 @@ void iree_compiler::propagationTransferFunction(
                                  update);
     return;
   }
-
-  // TODO: Speculative propagation for broadcasts can be added here.
 
   return;
 }
@@ -225,12 +226,11 @@ static void enforceLayoutToElementwiseOp(
     }
   }
 
-  // Enforce the same layout on all operands. Note that this will
-  // not cause problems with the result because if the result had a strongly
-  // enforced layout, it would have enforced its layout on every operand. This
-  // is just to handle cases where results have a uninitialized/weakly enforced
-  // layout.
-  enforceSameLayout(op, operandLattices, update);
+  // Enforce the same layout on all operands. Note that this will not cause
+  // problems with the result because if the result had a enforced layout, it
+  // would have enforced its layout on every operand. This is just to handle
+  // cases where results have a uninitialized layout.
+  enforceSameLayoutForOperands(op, operandLattices, update);
 }
 
 static void enforceLayoutToMultiReductionOp(
@@ -242,7 +242,7 @@ static void enforceLayoutToMultiReductionOp(
   DistributionLayout *value = operandLattices[0];
   DistributionLayout *init = operandLattices[1];
 
-  // Enforce the result layout on init;
+  // Enforce the result layout on init.
   ChangeResult changedDueToResult = init->resolve(result);
 
   // Try to make the init agree on the same layout as projected value.
@@ -250,8 +250,7 @@ static void enforceLayoutToMultiReductionOp(
     SmallVector<bool> reductionMask = multiReduce.getReductionMask();
     AffineMapLayout projectedLayout =
         value->getInnerLayout().project(reductionMask);
-    ChangeResult changedDueToValue =
-        init->resolve(value->getState(), projectedLayout);
+    ChangeResult changedDueToValue = init->resolve(projectedLayout);
     update(init, changedDueToResult | changedDueToValue);
   } else {
     update(init, changedDueToResult);
@@ -283,7 +282,7 @@ static void enforceLayoutToTransposeOp(
       result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
-  ChangeResult changed = value->resolve(result->getState(), permutedLayout);
+  ChangeResult changed = value->resolve(permutedLayout);
   update(value, changed);
 }
 
@@ -328,7 +327,7 @@ static void enforceLayoutToBroadcastOp(
 
   AffineMapLayout resultLayout =
       result->getInnerLayout().project(reductionMask);
-  ChangeResult changed = value->resolve(result->getState(), resultLayout);
+  ChangeResult changed = value->resolve(resultLayout);
   update(value, changed);
 }
 

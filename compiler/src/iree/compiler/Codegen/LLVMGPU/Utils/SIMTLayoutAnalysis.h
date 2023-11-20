@@ -7,12 +7,12 @@
 #ifndef IREE_COMPILER_CODEGEN_LLVMGPU_UTILS_SIMTLAYOUTANALYSIS_H_
 #define IREE_COMPILER_CODEGEN_LLVMGPU_UTILS_SIMTLAYOUTANALYSIS_H_
 
+#include "iree-dialects/Dialect/VectorExt/IR/VectorExtOps.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
-#include "iree-dialects/Dialect/VectorExt/IR/VectorExtOps.h"
 
 namespace mlir {
 namespace iree_compiler {
@@ -20,12 +20,6 @@ namespace iree_compiler {
 /// Forward decleration for analysis.
 class PropagateLayout;
 class EnforceLayout;
-
-enum class Enforcement {
-  Uninitialized = 0,
-  WeaklyEnforced = 1,
-  StronglyEnforced = 2,
-};
 
 #if 1
 using AffineMapLayout = IREE::VectorExt::LayoutAttr;
@@ -109,9 +103,6 @@ class DistributionLayout : public AnalysisState {
 public:
   explicit DistributionLayout(Value val) : AnalysisState(val) {}
 
-  Enforcement getState() const { return state; }
-  void setState(Enforcement state) { this->state = state; }
-
   Value getValue() const {
     ProgramPoint point = getPoint();
     assert(isa<Value>(point) && "expected program point to be a value");
@@ -120,22 +111,20 @@ public:
 
   ChangeResult resolveWithPossibleConflict(const DistributionLayout *rhs,
                                            OpOperand &operand);
-  ChangeResult resolveWithPossibleConflict(Enforcement state,
-                                           const AffineMapLayout &rhs,
+  ChangeResult resolveWithPossibleConflict(const AffineMapLayout &rhs,
                                            OpOperand &operand);
 
   ChangeResult resolve(const DistributionLayout *rhs);
-  ChangeResult resolve(Enforcement state, const AffineMapLayout &rhs);
+  ChangeResult resolve(const AffineMapLayout &rhs);
 
   AffineMapLayout getInnerLayout() const { return vectorLayout; }
 
-  bool isUninitialized() const {
-    return getState() == Enforcement::Uninitialized;
-  }
+  bool isUninitialized() const { return !vectorLayout; }
+  bool hasLayout() const { return !isUninitialized(); }
 
   /// Compare two states.
   bool operator==(const DistributionLayout &rhs) const {
-    return state == rhs.state && vectorLayout == rhs.vectorLayout;
+    return vectorLayout == rhs.vectorLayout;
   }
   bool operator!=(const DistributionLayout &rhs) const {
     return !(*this == rhs);
@@ -156,19 +145,31 @@ public:
   void subscribeEnforcement(EnforceLayout *analysis) { enforcement = analysis; }
 
 private:
+  /// The result of a resolution.
+  /// Change: The layout was changed.
+  /// Conflict: The layout was not changed because there was a conflict.
+  /// NoChange: The layout was not changed because it was already the same.
   enum ResolutionResult {
     Change,
     Conflict,
     NoChange,
   };
 
-  ResolutionResult doResolution(Enforcement state, const AffineMapLayout &rhs);
+  /// Attempt to resolve the current lattice with the given lattice. Returns if
+  /// the current layout was not changed, changed or if there was a layout
+  /// conflict.
+  ResolutionResult doResolution(const AffineMapLayout &rhs);
+
+  /// Set the layout for this lattice element to the given layout. This function
+  /// should only be used when you know there will be no layout conflicts.
+  /// Otherwise, the resolve-like functions should be used.
   void setInnerLayout(const AffineMapLayout &layout) { vectorLayout = layout; }
 
-  Enforcement state = Enforcement::Uninitialized;
+  /// The layout of the vector SSA Value.
   AffineMapLayout vectorLayout;
 
-  /// A set of analyses that should be updated when this lattice changes.
+  /// Each lattice element stores a pointer to the analysis that work on it so
+  /// it can notify them when it changes.
   PropagateLayout *propagation = nullptr;
   EnforceLayout *enforcement = nullptr;
 };
@@ -185,8 +186,7 @@ public:
   /// Register a new value to be part of the dataflow analysis. The value should
   /// not be part of the analysis already. This is used for new values that are
   /// created.
-  void registerNewValue(Value val, Enforcement state,
-                        const AffineMapLayout &layout);
+  void registerNewValue(Value val, const AffineMapLayout &layout);
 
   friend class DistributionLayout;
 
@@ -207,8 +207,7 @@ public:
 
   LogicalResult visit(ProgramPoint point) override;
 
-  void registerNewValue(Value val, Enforcement state,
-                        const AffineMapLayout &layout);
+  void registerNewValue(Value val, const AffineMapLayout &layout);
 
   friend class DistributionLayout;
 

@@ -5,13 +5,13 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "iree/compiler/Codegen/LLVMGPU/Utils/SIMTLayoutAnalysis.h"
+#include "SIMTLayoutAnalysis.h"
 #include "iree/compiler/Codegen/LLVMGPU/Utils/SIMTTransferFunctions.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
-#include "SIMTLayoutAnalysis.h"
 
 #define DEBUG_TYPE "iree-simt-layout-analysis"
 
@@ -20,8 +20,7 @@ using namespace mlir::iree_compiler;
 using namespace mlir::iree_compiler::IREE::VectorExt;
 
 DistributionLayout::ResolutionResult
-DistributionLayout::doResolution(Enforcement state,
-                                 const AffineMapLayout &rhs) {
+DistributionLayout::doResolution(const AffineMapLayout &rhs) {
   AffineMapLayout &lhs = vectorLayout;
 
   // If both layouts are same, do nothing.
@@ -29,23 +28,13 @@ DistributionLayout::doResolution(Enforcement state,
     return ResolutionResult::NoChange;
   }
 
-  // Take the more restrictive enforcement.
-  if (this->state < state) {
-    setState(state);
+  // Take the other layout if the current layout is empty.
+  if (rhs) {
     setInnerLayout(rhs);
     return ResolutionResult::Change;
-  } else if (this->state > state) {
-    return ResolutionResult::NoChange;
   }
 
-  // From here, both are in the same state, but have different layouts.
-
-  // WeaklyEnforced layouts don't need to be resolved.
-  if (this->state == Enforcement::WeaklyEnforced) {
-    return ResolutionResult::NoChange;
-  }
-
-  // StronglyEnforced layouts conflict and need to be resolved.
+  // Layouts conflict and need to be resolved.
   return ResolutionResult::Conflict;
 }
 /// Create an unregistered operation "resolve_conflict" to resolve this
@@ -58,9 +47,10 @@ Operation *createResolutionOp(OpBuilder &builder, Value input) {
   return resolution;
 }
 
-ChangeResult DistributionLayout::resolveWithPossibleConflict(
-    Enforcement state, const AffineMapLayout &rhs, OpOperand &opOperand) {
-  ResolutionResult result = doResolution(state, rhs);
+ChangeResult
+DistributionLayout::resolveWithPossibleConflict(const AffineMapLayout &rhs,
+                                                OpOperand &opOperand) {
+  ResolutionResult result = doResolution(rhs);
 
   // If there is no conflict, simply return.
   if (result == ResolutionResult::NoChange) {
@@ -82,13 +72,14 @@ ChangeResult DistributionLayout::resolveWithPossibleConflict(
   // Create a new value for the resolved value and subscribe it to propagation
   // and enforcement.
   // We possibly don't need to subscribe this since this value has already
-  // reached the top of the lattice and cannot do anything else.
+  // reached the top of the lattice and shouldn't do anything else. But it's
+  // nicer to do it to have consistency.
   DistributionLayout *resolvedLayout =
       propagation->getLatticeElement(resolvedValue);
   resolvedLayout->subscribeEnforcement(enforcement);
 
   // We can now resolve this resolved value to the required layout.
-  resolvedLayout->resolve(state, rhs);
+  resolvedLayout->resolve(rhs);
 
   // No change actually needs to be propagated after a conflict resolution.
   // TODO: Ideally, there should be another state in the lattice which says
@@ -100,12 +91,12 @@ ChangeResult DistributionLayout::resolveWithPossibleConflict(
 ChangeResult
 DistributionLayout::resolveWithPossibleConflict(const DistributionLayout *rhs,
                                                 OpOperand &opOperand) {
-  return resolveWithPossibleConflict(rhs->state, rhs->vectorLayout, opOperand);
+  assert(rhs && "layout to resolve with should not be null");
+  return resolveWithPossibleConflict(rhs->vectorLayout, opOperand);
 }
 
-ChangeResult DistributionLayout::resolve(Enforcement state,
-                                         const AffineMapLayout &rhs) {
-  ResolutionResult result = doResolution(state, rhs);
+ChangeResult DistributionLayout::resolve(const AffineMapLayout &rhs) {
+  ResolutionResult result = doResolution(rhs);
 
   switch (result) {
   case ResolutionResult::NoChange:
@@ -122,25 +113,15 @@ ChangeResult DistributionLayout::resolve(Enforcement state,
 }
 
 ChangeResult DistributionLayout::resolve(const DistributionLayout *rhs) {
-  return resolve(rhs->state, rhs->vectorLayout);
+  assert(rhs && "layout to resolve with should not be null");
+  return resolve(rhs->vectorLayout);
 }
 
 void DistributionLayout::print(raw_ostream &os) const {
-  switch (getState()) {
-  case Enforcement::Uninitialized:
-    os << "Uninitialized";
-    break;
-  case Enforcement::WeaklyEnforced:
-    os << "WeaklyEnforced";
-    break;
-  case Enforcement::StronglyEnforced:
-    os << "StronglyEnforced";
-    break;
-    break;
-  }
-
-  if (getState() != Enforcement::Uninitialized) {
+  if (vectorLayout) {
     os << " " << vectorLayout;
+  } else {
+    os << "Uninitialized";
   }
 }
 
@@ -186,15 +167,15 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       for (Value operand : contractOp.getOperands()) {
         if (isa<VectorType>(operand.getType())) {
           operands.push_back(getLatticeElement(operand));
-          SmallVector<int64_t> operandShape{cast<VectorType>(operand.getType()).getShape()};
+          SmallVector<int64_t> operandShape{
+              cast<VectorType>(operand.getType()).getShape()};
           operandShapes.push_back(operandShape);
         }
       }
 
-      #if 1
+#if 1
 
-      auto constructLayout = [&](int64_t canonicalShape,
-                                 int64_t vectorShape,
+      auto constructLayout = [&](int64_t canonicalShape, int64_t vectorShape,
                                  ArrayRef<LayoutDimension> dims,
                                  SmallVectorImpl<int64_t> &shapes) {
         int64_t batchDim = vectorShape / canonicalShape;
@@ -203,7 +184,8 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
         auto toAttr = [&](LayoutDimension dim) {
           return LayoutDimensionAttr::get(op->getContext(), dim);
         };
-        std::transform(dims.begin(), dims.end(), std::back_inserter(labels), toAttr);
+        std::transform(dims.begin(), dims.end(), std::back_inserter(labels),
+                       toAttr);
         return PerDimLayoutAttr::get(op->getContext(), labels, shapes);
       };
 
@@ -214,37 +196,47 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       // --------- A-matrix
       // TODO: Get canonical shapes from instruction shape
       canonicalShape = {16, 16};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY, LayoutDimension::VECTORZ};
+      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
+              LayoutDimension::VECTORZ};
       shapes = {8, 2};
-      PerDimLayoutAttr rowLayout = constructLayout(canonicalShape[0], operandShapes[0][0], dims, shapes);
+      PerDimLayoutAttr rowLayout =
+          constructLayout(canonicalShape[0], operandShapes[0][0], dims, shapes);
 
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX, LayoutDimension::LANEX, LayoutDimension::VECTORY};
+      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
+              LayoutDimension::LANEX, LayoutDimension::VECTORY};
       shapes = {2, 4, 2};
-      PerDimLayoutAttr colLayout = constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
+      PerDimLayoutAttr colLayout =
+          constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
 
       SmallVector<PerDimLayoutAttr> layouts;
       layouts.push_back(rowLayout);
       layouts.push_back(colLayout);
 
-      LayoutAttr nvidiaMMASyncLayoutA = LayoutAttr::get(op->getContext(), layouts);
+      LayoutAttr nvidiaMMASyncLayoutA =
+          LayoutAttr::get(op->getContext(), layouts);
 
       // --------- B-matrix
       canonicalShape = {16, 8};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY, LayoutDimension::VECTORZ};
+      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
+              LayoutDimension::VECTORZ};
       shapes = {8, 1};
-      rowLayout = constructLayout(canonicalShape[0], operandShapes[1][0], dims, shapes);
+      rowLayout =
+          constructLayout(canonicalShape[0], operandShapes[1][0], dims, shapes);
 
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX, LayoutDimension::LANEX, LayoutDimension::VECTORY};
+      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
+              LayoutDimension::LANEX, LayoutDimension::VECTORY};
       shapes = {2, 4, 2};
-      colLayout = constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
+      colLayout =
+          constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
 
       layouts.clear();
       layouts.push_back(rowLayout);
       layouts.push_back(colLayout);
 
-      LayoutAttr nvidiaMMASyncLayoutB = LayoutAttr::get(op->getContext(), layouts);
+      LayoutAttr nvidiaMMASyncLayoutB =
+          LayoutAttr::get(op->getContext(), layouts);
 
-      #else
+#else
       AffineExpr d0, d1, gpux, gpuy, gpuz;
       bindDims(ctx, d0, d1);
       bindSymbols(ctx, gpux, gpuy, gpuz);
@@ -269,18 +261,14 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
       SmallVector<int64_t> aShape = {4, 2};
       SmallVector<int64_t> bShape = {2, 2};
       SmallVector<int64_t> cShape = {2, 2};
-      #endif
+#endif
 
       // Set result layout.
-      result->resolve(Enforcement::StronglyEnforced,
-                      nvidiaMMASyncLayoutA);
+      result->resolve(nvidiaMMASyncLayoutA);
       // Set operand layouts.
-      operands[0]->resolve(Enforcement::StronglyEnforced,
-                           nvidiaMMASyncLayoutA);
-      operands[1]->resolve(Enforcement::StronglyEnforced,
-                           nvidiaMMASyncLayoutB);
-      operands[2]->resolve(Enforcement::StronglyEnforced,
-                           nvidiaMMASyncLayoutA);
+      operands[0]->resolve(nvidiaMMASyncLayoutA);
+      operands[1]->resolve(nvidiaMMASyncLayoutB);
+      operands[2]->resolve(nvidiaMMASyncLayoutA);
 
       propagateIfChanged(result, ChangeResult::Change);
       propagateIfChanged(operands[0], ChangeResult::Change);
@@ -415,12 +403,14 @@ DistributionLayout *EnforceLayout::getLatticeElement(Value val) {
 
 SmallVector<int64_t>
 mlir::iree_compiler::getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout) {
-  SmallVector<LayoutDimension> dims = {LayoutDimension::BATCHX,
-   LayoutDimension::BATCHY, LayoutDimension::VECTORZ,
-   LayoutDimension::VECTORY, LayoutDimension::VECTORX};
+  SmallVector<LayoutDimension> dims = {
+      LayoutDimension::BATCHX, LayoutDimension::BATCHY,
+      LayoutDimension::VECTORZ, LayoutDimension::VECTORY,
+      LayoutDimension::VECTORX};
   SmallVector<int64_t> shape = layout.getSIMTVectorShape(dims);
   // TODO: After a projection, the shape could be smaller.
-  if (shape.size() < dims.size()) return shape;
+  if (shape.size() < dims.size())
+    return shape;
   assert(shape.size() == dims.size());
   // Collapse VectorZ and VectorY dimensions. This is NVIDIA specific.
   shape[2] *= shape[3];
