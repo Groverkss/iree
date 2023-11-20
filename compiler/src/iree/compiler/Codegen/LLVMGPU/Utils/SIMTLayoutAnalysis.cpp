@@ -50,6 +50,8 @@ DistributionLayout::resolveWithPossibleConflict(const AffineMapLayout &rhs,
     return ChangeResult::Change;
   }
 
+  opOperand.getOwner()->dump();
+
   // Resolve conflict by create an operation that takes the input the conflicted
   // value and returns the resolved value.
   OpBuilder builder(opOperand.getOwner());

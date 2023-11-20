@@ -109,6 +109,9 @@ public:
     return cast<Value>(point);
   }
 
+  /// TODO: This currently, creates a new value but doesn't replace it with the
+  /// current value, because that would be wrong. Find a way to take care of
+  /// that better.
   ChangeResult resolveWithPossibleConflict(const DistributionLayout *rhs,
                                            OpOperand &operand);
   ChangeResult resolveWithPossibleConflict(const AffineMapLayout &rhs,

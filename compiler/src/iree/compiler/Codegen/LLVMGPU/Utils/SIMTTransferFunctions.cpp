@@ -78,6 +78,8 @@ static void enforceSameLayoutForOperands(
 
   // Enforce the layout to other operands.
   if (chosenOperandLayout) {
+    // Note that the operand lattice is not updated. So using the operand
+    // lattice again can cause bugs.
     for (auto [index, lattice] : llvm::enumerate(operands)) {
       OpOperand &opOperand = getOpOperand(op, index);
       ChangeResult changed =
@@ -218,19 +220,18 @@ static void enforceLayoutToElementwiseOp(
 
   // Try to enforce the layout of the result on operands.
   const DistributionLayout *result = resultLattices[0];
-  if (!result->isUninitialized()) {
+  if (result->hasLayout()) {
+    // Note that the operand lattice is not updated. So using the operand
+    // lattice again can cause bugs.
     for (auto [index, operandLattice] : llvm::enumerate(operandLattices)) {
       ChangeResult changed = operandLattice->resolveWithPossibleConflict(
           result, getOpOperand(op, index));
       update(operandLattice, changed);
     }
+  } else {
+    // Enforce the same layout on all operands.
+    enforceSameLayoutForOperands(op, operandLattices, update);
   }
-
-  // Enforce the same layout on all operands. Note that this will not cause
-  // problems with the result because if the result had a enforced layout, it
-  // would have enforced its layout on every operand. This is just to handle
-  // cases where results have a uninitialized layout.
-  enforceSameLayoutForOperands(op, operandLattices, update);
 }
 
 static void enforceLayoutToMultiReductionOp(
