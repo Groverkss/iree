@@ -29,7 +29,7 @@ DistributionLayout::doResolution(const AffineMapLayout &rhs) {
   }
 
   // Take the other layout if the current layout is empty.
-  if (rhs) {
+  if (!lhs && rhs) {
     setInnerLayout(rhs);
     return ResolutionResult::Change;
   }

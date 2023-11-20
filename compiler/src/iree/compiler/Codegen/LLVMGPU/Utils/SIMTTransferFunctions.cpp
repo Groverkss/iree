@@ -243,14 +243,16 @@ static void enforceLayoutToMultiReductionOp(
   DistributionLayout *init = operandLattices[1];
 
   // Enforce the result layout on init.
-  ChangeResult changedDueToResult = init->resolve(result);
+  ChangeResult changedDueToResult =
+      init->resolveWithPossibleConflict(result, getOpOperand(multiReduce, 1));
 
   // Try to make the init agree on the same layout as projected value.
   if (!value->isUninitialized()) {
     SmallVector<bool> reductionMask = multiReduce.getReductionMask();
     AffineMapLayout projectedLayout =
         value->getInnerLayout().project(reductionMask);
-    ChangeResult changedDueToValue = init->resolve(projectedLayout);
+    ChangeResult changedDueToValue = init->resolveWithPossibleConflict(
+        projectedLayout, getOpOperand(multiReduce, 0));
     update(init, changedDueToResult | changedDueToValue);
   } else {
     update(init, changedDueToResult);
@@ -282,7 +284,8 @@ static void enforceLayoutToTransposeOp(
       result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
-  ChangeResult changed = value->resolve(permutedLayout);
+  ChangeResult changed = value->resolveWithPossibleConflict(
+      permutedLayout, getOpOperand(transpose, 0));
   update(value, changed);
 }
 
@@ -327,7 +330,8 @@ static void enforceLayoutToBroadcastOp(
 
   AffineMapLayout resultLayout =
       result->getInnerLayout().project(reductionMask);
-  ChangeResult changed = value->resolve(resultLayout);
+  ChangeResult changed = value->resolveWithPossibleConflict(
+      resultLayout, getOpOperand(broadcast, 0));
   update(value, changed);
 }
 
