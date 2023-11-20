@@ -283,6 +283,9 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
                            nvidiaMMASyncLayoutA);
 
       propagateIfChanged(result, ChangeResult::Change);
+      propagateIfChanged(operands[0], ChangeResult::Change);
+      propagateIfChanged(operands[1], ChangeResult::Change);
+      propagateIfChanged(operands[2], ChangeResult::Change);
     }
 
     visitOperation(traversed);
