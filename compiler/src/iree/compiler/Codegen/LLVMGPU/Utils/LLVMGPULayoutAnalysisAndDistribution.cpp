@@ -1300,7 +1300,8 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
         solver.lookupState<DistributionLayout>(result);
     if (layout && !layout->isUninitialized()) {
       op->setAttr("layout", layout->getInnerLayout());
-      SmallVector<int64_t> simtShape = getSIMTVectorShape(layout->getInnerLayout());
+      SmallVector<int64_t> simtShape =
+          getSIMTVectorShape(layout->getInnerLayout());
       if (!simtShape.empty()) {
         SmallVector<int64_t> simtShapeAttr(simtShape.begin(), simtShape.end());
         op->setAttr("simt_shape", rewriter.getI64ArrayAttr(simtShapeAttr));
