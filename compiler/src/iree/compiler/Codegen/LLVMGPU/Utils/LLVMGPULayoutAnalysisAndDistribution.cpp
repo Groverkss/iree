@@ -1293,23 +1293,16 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
   }
 
   funcOp.walk([&](Operation *op) {
-    if (op->getNumResults() == 0)
-      return;
-    Value result = op->getResult(0);
-    const DistributionLayout *layout =
-        solver.lookupState<DistributionLayout>(result);
-    if (layout && !layout->isUninitialized()) {
-      op->setAttr("layout", layout->getInnerLayout());
-      SmallVector<int64_t> simtShape =
-          getSIMTVectorShape(layout->getInnerLayout());
-      if (!simtShape.empty()) {
-        SmallVector<int64_t> simtShapeAttr(simtShape.begin(), simtShape.end());
-        op->setAttr("simt_shape", rewriter.getI64ArrayAttr(simtShapeAttr));
+    for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
+      const DistributionLayout *layout =
+          solver.lookupState<DistributionLayout>(operand);
+      if (layout && !layout->isUninitialized()) {
+        op->setAttr(("layout" + std::to_string(index)),
+                    layout->getInnerLayout());
       }
     }
   });
 
-  llvm::errs() << "success\n";
   return;
 
   // First walk through all the MMA ops and set their layouts

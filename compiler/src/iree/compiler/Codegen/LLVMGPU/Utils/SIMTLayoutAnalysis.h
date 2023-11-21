@@ -196,6 +196,10 @@ public:
 private:
   void visitOperation(Operation *op);
 
+  void visitRegionSuccessors(RegionBranchOpInterface branch,
+                             RegionBranchPoint branchPoint,
+                             OperandRange operands);
+
   DistributionLayout *getLatticeElement(Value val);
 
   MLIRContext *ctx;
@@ -216,6 +220,10 @@ public:
 
 private:
   void visitOperation(Operation *op);
+
+  void visitRegionSuccessors(RegionBranchOpInterface branch,
+                             RegionBranchPoint branchPoint,
+                             MutableArrayRef<OpOperand> operands);
 
   DistributionLayout *getLatticeElement(Value val);
 
