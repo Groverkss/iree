@@ -20,8 +20,8 @@ using namespace mlir::iree_compiler;
 using namespace mlir::iree_compiler::IREE::VectorExt;
 
 DistributionLayout::ResolutionResult
-DistributionLayout::doResolution(const AffineMapLayout &rhs) {
-  AffineMapLayout &lhs = vectorLayout;
+DistributionLayout::doResolution(const HighDimLayout &rhs) {
+  HighDimLayout &lhs = vectorLayout;
 
   // Ignore if the layout to resolve with is empty.
   if (!rhs) {
@@ -44,7 +44,7 @@ DistributionLayout::doResolution(const AffineMapLayout &rhs) {
 }
 
 ChangeResult
-DistributionLayout::resolveWithPossibleConflict(const AffineMapLayout &rhs,
+DistributionLayout::resolveWithPossibleConflict(const HighDimLayout &rhs,
                                                 OpOperand &opOperand) {
   ResolutionResult result = doResolution(rhs);
 
@@ -93,7 +93,7 @@ DistributionLayout::resolveWithPossibleConflict(const DistributionLayout *rhs,
   return resolveWithPossibleConflict(rhs->vectorLayout, opOperand);
 }
 
-ChangeResult DistributionLayout::resolve(const AffineMapLayout &rhs) {
+ChangeResult DistributionLayout::resolve(const HighDimLayout &rhs) {
   ResolutionResult result = doResolution(rhs);
 
   switch (result) {
@@ -176,8 +176,6 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
         }
       }
 
-#if 1
-
       auto constructLayout = [&](int64_t canonicalShape, int64_t vectorShape,
                                  ArrayRef<LayoutDimension> dims,
                                  SmallVectorImpl<int64_t> &shapes) {
@@ -259,33 +257,6 @@ LogicalResult PropagateLayout::initialize(Operation *op) {
 
       LayoutAttr nvidiaMMASyncLayoutC =
           LayoutAttr::get(op->getContext(), layouts);
-
-#else
-      AffineExpr d0, d1, gpux, gpuy, gpuz;
-      bindDims(ctx, d0, d1);
-      bindSymbols(ctx, gpux, gpuy, gpuz);
-
-      AffineMap nvidiaMMASyncLayoutA =
-          AffineMap::get(/*newRank=*/2, /*symbolCount=*/3,
-                         {
-                             gpuy + (8 * d0.floorDiv(2)),
-                             gpux + (8 * d1.floorDiv(2)) + (d1 % 2),
-                         },
-                         ctx);
-
-      AffineMap nvidiaMMASyncLayoutB =
-          AffineMap::get(/*newRank=*/2, /*symbolCount=*/3,
-                         {
-                             gpuy,
-                             gpux + (8 * d1.floorDiv(2)) + (d1 % 2),
-                         },
-                         ctx);
-
-      // Get shapes for A, B, C matrix.
-      SmallVector<int64_t> aShape = {4, 2};
-      SmallVector<int64_t> bShape = {2, 2};
-      SmallVector<int64_t> cShape = {2, 2};
-#endif
 
       // Set result layout.
       result->resolve(nvidiaMMASyncLayoutC);

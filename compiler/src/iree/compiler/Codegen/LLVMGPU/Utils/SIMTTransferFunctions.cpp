@@ -170,7 +170,7 @@ static void propagateLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-  AffineMapLayout permutedLayout =
+  HighDimLayout permutedLayout =
       result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
@@ -250,7 +250,7 @@ static void enforceLayoutToMultiReductionOp(
   // Try to make the init agree on the same layout as projected value.
   if (!value->isUninitialized()) {
     SmallVector<bool> reductionMask = multiReduce.getReductionMask();
-    AffineMapLayout projectedLayout =
+    HighDimLayout projectedLayout =
         value->getInnerLayout().project(reductionMask);
     ChangeResult changedDueToValue = init->resolveWithPossibleConflict(
         projectedLayout, getOpOperand(multiReduce, 0));
@@ -281,7 +281,7 @@ static void enforceLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-  AffineMapLayout permutedLayout =
+  HighDimLayout permutedLayout =
       result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
@@ -329,7 +329,7 @@ static void enforceLayoutToBroadcastOp(
     reductionMask[i] = true;
   }
 
-  AffineMapLayout resultLayout =
+  HighDimLayout resultLayout =
       result->getInnerLayout().project(reductionMask);
   ChangeResult changed = value->resolveWithPossibleConflict(
       resultLayout, getOpOperand(broadcast, 0));

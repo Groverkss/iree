@@ -21,83 +21,8 @@ namespace iree_compiler {
 class PropagateLayout;
 class EnforceLayout;
 
-#if 1
-using AffineMapLayout = IREE::VectorExt::LayoutAttr;
+using HighDimLayout = IREE::VectorExt::LayoutAttr;
 SmallVector<int64_t> getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout);
-#else
-class AffineMapLayout {
-public:
-  AffineMapLayout() = default;
-
-  explicit AffineMapLayout(AffineMap layout, ArrayRef<int64_t> simtShape)
-      : layout(layout), simtShape(simtShape) {}
-
-  bool operator==(const AffineMapLayout &rhs) const {
-    return layout == rhs.layout && simtShape == rhs.simtShape;
-  }
-  bool operator!=(const AffineMapLayout &rhs) const { return !(*this == rhs); }
-
-  AffineMap getMap() const { return layout; }
-  ArrayRef<int64_t> getSimtShape() const { return simtShape; }
-
-  AffineMapLayout permute(ArrayRef<unsigned> permutation) const {
-    AffineMap oldLayout = layout;
-    AffineMap permuteMap =
-        oldLayout.getPermutationMap(permutation, oldLayout.getContext());
-    // Permute old vector dims.
-    AffineMap newLayout = permuteMap.compose(oldLayout);
-    // Permute new vector dims.
-    newLayout = newLayout.compose(permuteMap);
-    // Permute the shapes.
-    SmallVector<int64_t> newOldShapes(simtShape.size());
-    for (unsigned i = 0, e = permutation.size(); i < e; ++i) {
-      newOldShapes[i] = simtShape[permutation[i]];
-    }
-    return AffineMapLayout(newLayout, newOldShapes);
-  }
-
-  AffineMapLayout project(ArrayRef<bool> projectedDims) {
-    // Get a new affine map with these dimensions projected out and these
-    // results projected out.
-
-    llvm::SmallBitVector reductionMaskBV(projectedDims.size());
-    SmallVector<unsigned> unreducedPos;
-    for (unsigned i = 0, e = projectedDims.size(); i < e; ++i) {
-      if (projectedDims[i]) {
-        reductionMaskBV = reductionMaskBV.set(i);
-      } else {
-        unreducedPos.push_back(i);
-      }
-    }
-
-    AffineMap newLayout =
-        projectDims(layout, reductionMaskBV, /*compressDims=*/true);
-    newLayout = newLayout.getSubMap(unreducedPos);
-
-    // Project the shapes.
-    SmallVector<int64_t> newOldShapes;
-    for (unsigned i = 0, e = projectedDims.size(); i < e; ++i) {
-      if (!projectedDims[i]) {
-        newOldShapes.push_back(simtShape[i]);
-      }
-    }
-    return AffineMapLayout(newLayout, newOldShapes);
-  }
-
-  friend raw_ostream &operator<<(raw_ostream &os,
-                                 const AffineMapLayout &layout) {
-    layout.print(os);
-    return os;
-  }
-
-  void print(raw_ostream &os) const { layout.print(os); }
-
-private:
-  /// (new vector dims)[gpu syms] -> (old vector dims)
-  AffineMap layout;
-  SmallVector<int64_t> simtShape;
-};
-#endif
 
 class DistributionLayout : public AnalysisState {
 public:
@@ -114,13 +39,13 @@ public:
   /// that better.
   ChangeResult resolveWithPossibleConflict(const DistributionLayout *rhs,
                                            OpOperand &operand);
-  ChangeResult resolveWithPossibleConflict(const AffineMapLayout &rhs,
+  ChangeResult resolveWithPossibleConflict(const HighDimLayout &rhs,
                                            OpOperand &operand);
 
   ChangeResult resolve(const DistributionLayout *rhs);
-  ChangeResult resolve(const AffineMapLayout &rhs);
+  ChangeResult resolve(const HighDimLayout &rhs);
 
-  AffineMapLayout getInnerLayout() const { return vectorLayout; }
+  HighDimLayout getInnerLayout() const { return vectorLayout; }
 
   bool isUninitialized() const { return !vectorLayout; }
   bool hasLayout() const { return !isUninitialized(); }
@@ -161,15 +86,15 @@ private:
   /// Attempt to resolve the current lattice with the given lattice. Returns if
   /// the current layout was not changed, changed or if there was a layout
   /// conflict.
-  ResolutionResult doResolution(const AffineMapLayout &rhs);
+  ResolutionResult doResolution(const HighDimLayout &rhs);
 
   /// Set the layout for this lattice element to the given layout. This function
   /// should only be used when you know there will be no layout conflicts.
   /// Otherwise, the resolve-like functions should be used.
-  void setInnerLayout(const AffineMapLayout &layout) { vectorLayout = layout; }
+  void setInnerLayout(const HighDimLayout &layout) { vectorLayout = layout; }
 
   /// The layout of the vector SSA Value.
-  AffineMapLayout vectorLayout;
+  HighDimLayout vectorLayout;
 
   /// Each lattice element stores a pointer to the analysis that work on it so
   /// it can notify them when it changes.
@@ -189,7 +114,7 @@ public:
   /// Register a new value to be part of the dataflow analysis. The value should
   /// not be part of the analysis already. This is used for new values that are
   /// created.
-  void registerNewValue(Value val, const AffineMapLayout &layout);
+  void registerNewValue(Value val, const HighDimLayout &layout);
 
   friend class DistributionLayout;
 
@@ -214,7 +139,7 @@ public:
 
   LogicalResult visit(ProgramPoint point) override;
 
-  void registerNewValue(Value val, const AffineMapLayout &layout);
+  void registerNewValue(Value val, const HighDimLayout &layout);
 
   friend class DistributionLayout;
 
