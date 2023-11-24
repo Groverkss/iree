@@ -60,10 +60,6 @@ public:
 
   void print(raw_ostream &os) const override;
 
-  /// When the lattice gets updated, propagate an update to users of the value
-  /// using its use-def chain to subscribed analyses.
-  void onUpdate(DataFlowSolver *solver) const override;
-
   /// Subscribe an analysis to updates of the lattice. When the lattice
   /// changes, subscribed analyses are re-invoked. This is more efficient than
   /// relying on the dependency map.
@@ -73,6 +69,10 @@ public:
   void subscribeEnforcement(EnforceLayout *analysis) { enforcement = analysis; }
 
 private:
+  /// When the lattice gets updated, propagate an update to users of the value
+  /// using its use-def chain to subscribed analyses.
+  void onUpdate(DataFlowSolver *solver) const override;
+
   /// The result of a resolution.
   /// Change: The layout was changed.
   /// Conflict: The layout was not changed because there was a conflict.
