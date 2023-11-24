@@ -238,25 +238,15 @@ static void enforceLayoutToMultiReductionOp(
     ArrayRef<DistributionLayout *> operandLattices,
     ArrayRef<const DistributionLayout *> resultLattices,
     std::function<void(DistributionLayout *, ChangeResult)> update) {
+  // Reductions should always propagate value layout to result. Result can
+  // enforce it's layout on init.
   const DistributionLayout *result = resultLattices[0];
-  DistributionLayout *value = operandLattices[0];
   DistributionLayout *init = operandLattices[1];
 
   // Enforce the result layout on init.
   ChangeResult changedDueToResult =
       init->resolveWithPossibleConflict(result, getOpOperand(multiReduce, 1));
-
-  // Try to make the init agree on the same layout as projected value.
-  if (!value->isUninitialized()) {
-    SmallVector<bool> reductionMask = multiReduce.getReductionMask();
-    HighDimLayout projectedLayout =
-        value->getInnerLayout().project(reductionMask);
-    ChangeResult changedDueToValue = init->resolveWithPossibleConflict(
-        projectedLayout, getOpOperand(multiReduce, 0));
-    update(init, changedDueToResult | changedDueToValue);
-  } else {
-    update(init, changedDueToResult);
-  }
+  update(init, changedDueToResult);
 }
 
 static void enforceLayoutToTransposeOp(

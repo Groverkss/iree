@@ -91,7 +91,11 @@ private:
   /// Set the layout for this lattice element to the given layout. This function
   /// should only be used when you know there will be no layout conflicts.
   /// Otherwise, the resolve-like functions should be used.
-  void setInnerLayout(const HighDimLayout &layout) { vectorLayout = layout; }
+  void setInnerLayout(const HighDimLayout &layout) {
+    assert(!layout || (layout.getLayouts().size() ==
+                       getValue().getType().cast<VectorType>().getRank()));
+    vectorLayout = layout;
+  }
 
   /// The layout of the vector SSA Value.
   HighDimLayout vectorLayout;
