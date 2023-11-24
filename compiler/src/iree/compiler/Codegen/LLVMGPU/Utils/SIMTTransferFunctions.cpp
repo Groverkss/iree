@@ -170,8 +170,7 @@ static void propagateLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-  HighDimLayout permutedLayout =
-      result->getInnerLayout().permute(permutation);
+  HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = result->resolve(permutedLayout);
@@ -281,8 +280,7 @@ static void enforceLayoutToTransposeOp(
   for (Attribute attr : transp) {
     permutation.push_back(attr.cast<IntegerAttr>().getInt());
   }
-  HighDimLayout permutedLayout =
-      result->getInnerLayout().permute(permutation);
+  HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = value->resolveWithPossibleConflict(
@@ -329,8 +327,7 @@ static void enforceLayoutToBroadcastOp(
     reductionMask[i] = true;
   }
 
-  HighDimLayout resultLayout =
-      result->getInnerLayout().project(reductionMask);
+  HighDimLayout resultLayout = result->getInnerLayout().project(reductionMask);
   ChangeResult changed = value->resolveWithPossibleConflict(
       resultLayout, getOpOperand(broadcast, 0));
   update(value, changed);
