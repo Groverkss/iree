@@ -104,10 +104,12 @@ private:
 
 class PropagateLayout : public DataFlowAnalysis {
 public:
-  explicit PropagateLayout(DataFlowSolver &solver, MLIRContext *ctx)
-      : DataFlowAnalysis(solver), ctx(ctx) {}
+  explicit PropagateLayout(DataFlowSolver &solver,
+                           DenseMap<Value, HighDimLayout> &anchors,
+                           MLIRContext *ctx)
+      : DataFlowAnalysis(solver), anchors(anchors), ctx(ctx) {}
 
-  LogicalResult initialize(Operation *op) override;
+  LogicalResult initialize(Operation *root) override;
 
   LogicalResult visit(ProgramPoint point) override;
 
@@ -127,6 +129,8 @@ private:
 
   DistributionLayout *getLatticeElement(Value val);
 
+  DenseMap<Value, HighDimLayout> anchors;
+
   MLIRContext *ctx;
 };
 
@@ -135,7 +139,7 @@ public:
   explicit EnforceLayout(DataFlowSolver &solver, MLIRContext *ctx)
       : DataFlowAnalysis(solver), ctx(ctx) {}
 
-  LogicalResult initialize(Operation *op) override;
+  LogicalResult initialize(Operation *root) override;
 
   LogicalResult visit(ProgramPoint point) override;
 
@@ -153,6 +157,22 @@ private:
   DistributionLayout *getLatticeElement(Value val);
 
   MLIRContext *ctx;
+};
+
+class VectorLayoutAnalysis {
+public:
+  VectorLayoutAnalysis(Operation *root) : root(root) {}
+
+  void setAnchor(Value val, HighDimLayout layout);
+
+  LogicalResult run();
+
+  HighDimLayout getLayout(Value val);
+
+private:
+  Operation *root;
+  DenseMap<Value, HighDimLayout> anchors;
+  DataFlowSolver solver;
 };
 
 }; // namespace iree_compiler

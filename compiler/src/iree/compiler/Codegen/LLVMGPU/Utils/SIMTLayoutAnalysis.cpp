@@ -156,123 +156,15 @@ void DistributionLayout::onUpdate(DataFlowSolver *solver) const {
   }
 }
 
-LogicalResult PropagateLayout::initialize(Operation *op) {
-  op->walk([&](Operation *traversed) {
-    // If we see a vector.contract, we enforcement it.
-    if (auto contractOp = dyn_cast<vector::ContractionOp>(traversed)) {
-      Value returnVal = contractOp.getResult();
-      DistributionLayout *result = getLatticeElement(returnVal);
+LogicalResult PropagateLayout::initialize(Operation *root) {
+  // Set layout for anchor ops.
+  for (auto [val, layout] : anchors) {
+    DistributionLayout *latticeEl = getLatticeElement(val);
+    ChangeResult changed = latticeEl->resolve(layout);
+    propagateIfChanged(latticeEl, changed);
+  }
 
-      // Get all vector operands of the contract.
-      SmallVector<DistributionLayout *> operands;
-      operands.reserve(contractOp.getNumOperands());
-      SmallVector<SmallVector<int64_t>> operandShapes;
-      for (Value operand : contractOp.getOperands()) {
-        if (isa<VectorType>(operand.getType())) {
-          operands.push_back(getLatticeElement(operand));
-          SmallVector<int64_t> operandShape{
-              cast<VectorType>(operand.getType()).getShape()};
-          operandShapes.push_back(operandShape);
-        }
-      }
-
-      auto constructLayout = [&](int64_t canonicalShape, int64_t vectorShape,
-                                 ArrayRef<LayoutDimension> dims,
-                                 SmallVectorImpl<int64_t> &shapes) {
-        int64_t batchDim = vectorShape / canonicalShape;
-        shapes.insert(shapes.begin(), batchDim);
-        SmallVector<LayoutDimensionAttr> labels;
-        auto toAttr = [&](LayoutDimension dim) {
-          return LayoutDimensionAttr::get(op->getContext(), dim);
-        };
-        std::transform(dims.begin(), dims.end(), std::back_inserter(labels),
-                       toAttr);
-        return PerDimLayoutAttr::get(op->getContext(), labels, shapes);
-      };
-
-      SmallVector<int64_t> canonicalShape;
-      SmallVector<LayoutDimension> dims;
-      SmallVector<int64_t> shapes;
-
-      // --------- A-matrix
-      // TODO: Get canonical shapes from instruction shape
-      canonicalShape = {16, 16};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 2};
-      PerDimLayoutAttr rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[0][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      PerDimLayoutAttr colLayout =
-          constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
-
-      SmallVector<PerDimLayoutAttr> layouts;
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutA =
-          LayoutAttr::get(op->getContext(), layouts);
-
-      // --------- B-matrix
-      canonicalShape = {16, 8};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 1};
-      rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[1][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      colLayout =
-          constructLayout(canonicalShape[1], operandShapes[1][1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutB =
-          LayoutAttr::get(op->getContext(), layouts);
-
-      // --------- C-matrix
-      canonicalShape = {16, 8};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORY};
-      shapes = {8, 2};
-      rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[2][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORZ};
-      shapes = {2, 4, 1};
-      colLayout =
-          constructLayout(canonicalShape[1], operandShapes[2][1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutC =
-          LayoutAttr::get(op->getContext(), layouts);
-
-      // Set result layout.
-      result->resolve(nvidiaMMASyncLayoutC);
-      // Set operand layouts.
-      operands[0]->resolve(nvidiaMMASyncLayoutA);
-      operands[1]->resolve(nvidiaMMASyncLayoutB);
-      operands[2]->resolve(nvidiaMMASyncLayoutC);
-
-      propagateIfChanged(result, ChangeResult::Change);
-      propagateIfChanged(operands[0], ChangeResult::Change);
-      propagateIfChanged(operands[1], ChangeResult::Change);
-      propagateIfChanged(operands[2], ChangeResult::Change);
-    }
-
-    visitOperation(traversed);
-  });
+  root->walk([&](Operation *traversed) { visitOperation(traversed); });
 
   return success();
 }
@@ -388,8 +280,8 @@ DistributionLayout *PropagateLayout::getLatticeElement(Value val) {
   return layout;
 }
 
-LogicalResult EnforceLayout::initialize(Operation *op) {
-  op->walk([&](Operation *traversed) { visitOperation(traversed); });
+LogicalResult EnforceLayout::initialize(Operation *root) {
+  root->walk([&](Operation *traversed) { visitOperation(traversed); });
   return success();
 }
 
@@ -541,4 +433,26 @@ mlir::iree_compiler::getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout) {
   shape[3] = shape[4];
   shape.pop_back();
   return shape;
+}
+
+LogicalResult VectorLayoutAnalysis::run() {
+  // The order of loading matters here, because propagateLayout does anchoring
+  // initialization which needs the lattice to know both enforcement and
+  // propagation.
+  solver.load<EnforceLayout>(root->getContext());
+  solver.load<PropagateLayout>(anchors, root->getContext());
+  return solver.initializeAndRun(root);
+}
+
+void VectorLayoutAnalysis::setAnchor(Value val, HighDimLayout layout) {
+  anchors[val] = layout;
+}
+
+HighDimLayout VectorLayoutAnalysis::getLayout(Value val) {
+  const DistributionLayout *layout =
+      solver.lookupState<DistributionLayout>(val);
+  if (!layout) {
+    return HighDimLayout();
+  }
+  return layout->getInnerLayout();
 }
