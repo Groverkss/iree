@@ -4,8 +4,7 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree-dialects/Dialect/VectorExt/IR/VectorExtOps.h"
-#include "iree/compiler/Codegen/LLVMGPU/Utils/SIMTLayoutAnalysis.h"
+#include "iree/compiler/Codegen/LLVMGPU/Utils/LLVMGPUUtils.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -18,8 +17,6 @@
 #include "mlir/IR/Matchers.h"
 
 #define DEBUG_TYPE "iree-llvmgpu-layout-analysis-and-distribution"
-
-using namespace mlir::iree_compiler::IREE::VectorExt;
 
 namespace mlir::iree_compiler {
 
@@ -1282,128 +1279,10 @@ static bool isMatmulTransposeB(vector::ContractionOp contractOp) {
   return maps == infer({{m, k}, {n, k}, {m, n}});
 }
 
-static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
-  op->walk([&](Operation *op) {
-    if (auto contractOp = dyn_cast<vector::ContractionOp>(op)) {
-      MLIRContext *ctx = contractOp.getContext();
-
-      // Get all vector operands of the contract.
-      SmallVector<SmallVector<int64_t>> operandShapes;
-      for (Value operand : contractOp.getOperands()) {
-        if (isa<VectorType>(operand.getType())) {
-          SmallVector<int64_t> operandShape{
-              cast<VectorType>(operand.getType()).getShape()};
-          operandShapes.push_back(operandShape);
-        }
-      }
-
-      auto constructLayout = [&](int64_t canonicalShape, int64_t vectorShape,
-                                 ArrayRef<LayoutDimension> dims,
-                                 SmallVectorImpl<int64_t> &shapes) {
-        int64_t batchDim = vectorShape / canonicalShape;
-        shapes.insert(shapes.begin(), batchDim);
-        SmallVector<LayoutDimensionAttr> labels;
-        auto toAttr = [&](LayoutDimension dim) {
-          return LayoutDimensionAttr::get(ctx, dim);
-        };
-        std::transform(dims.begin(), dims.end(), std::back_inserter(labels),
-                       toAttr);
-        return PerDimLayoutAttr::get(ctx, labels, shapes);
-      };
-
-      SmallVector<int64_t> canonicalShape;
-      SmallVector<LayoutDimension> dims;
-      SmallVector<int64_t> shapes;
-
-      // --------- A-matrix
-      // TODO: Get canonical shapes from instruction shape
-      canonicalShape = {16, 16};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 2};
-      PerDimLayoutAttr rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[0][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      PerDimLayoutAttr colLayout =
-          constructLayout(canonicalShape[1], operandShapes[0][1], dims, shapes);
-
-      SmallVector<PerDimLayoutAttr> layouts;
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutA = LayoutAttr::get(ctx, layouts);
-
-      // --------- B-matrix
-      canonicalShape = {16, 8};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 1};
-      rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[1][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      colLayout =
-          constructLayout(canonicalShape[1], operandShapes[1][1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutB = LayoutAttr::get(ctx, layouts);
-
-      // --------- C-matrix
-      canonicalShape = {16, 8};
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORY};
-      shapes = {8, 2};
-      rowLayout =
-          constructLayout(canonicalShape[0], operandShapes[2][0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORZ};
-      shapes = {2, 4, 1};
-      colLayout =
-          constructLayout(canonicalShape[1], operandShapes[2][1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutC = LayoutAttr::get(ctx, layouts);
-
-      // Set layout for A and B matrix.
-      analysis.setAnchor(contractOp.getLhs(), nvidiaMMASyncLayoutA);
-      analysis.setAnchor(contractOp.getRhs(), nvidiaMMASyncLayoutB);
-      // Result and accumulator have the same layout: C-matrix
-      analysis.setAnchor(contractOp.getResult(), nvidiaMMASyncLayoutC);
-      analysis.setAnchor(contractOp.getAcc(), nvidiaMMASyncLayoutC);
-    }
-  });
-}
-
 void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
                                      func::FuncOp funcOp) {
-  VectorLayoutAnalysis analysis(funcOp);
-  setAnchorOps(analysis, funcOp);
-  if (failed(analysis.run())) {
-    funcOp.emitError("layout analysis failed");
-    return;
-  }
 
-  funcOp.walk([&](Operation *op) {
-    for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
-      HighDimLayout layout = analysis.getLayout(operand);
-      if (layout) {
-        op->setAttr(("layout" + std::to_string(index)), layout);
-      }
-    }
-  });
-
+  distributeVectors(rewriter, funcOp);
   return;
 
   // First walk through all the MMA ops and set their layouts
@@ -1475,10 +1354,5 @@ void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
   // Erase old ops
   eraseOps(opsToErase, rewriter);
 }
+
 } // namespace mlir::iree_compiler
-
-/*
-
-    // If we see a vector.contract, we enforcement it.
-
-*/

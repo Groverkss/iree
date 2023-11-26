@@ -20,9 +20,11 @@ iree_cc_library(
   SRCS
     "LLVMGPULayoutAnalysisAndDistribution.cpp"
     "LLVMGPUUtils.cpp"
+    "LLVMGPUVectorDistribution.cpp"
     "SIMTLayoutAnalysis.cpp"
     "SIMTTransferFunctions.cpp"
   DEPS
+    IREEVectorExtDialect
     LLVMSupport
     MLIRAffineDialect
     MLIRArithDialect

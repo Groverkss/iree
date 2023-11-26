@@ -21,6 +21,9 @@ void createAsyncGroups(RewriterBase &rewriter, func::FuncOp funcOp,
 void doLayoutAnalysisAndDistribution(RewriterBase &rewriter,
                                      func::FuncOp funcOp);
 
+/// Distribute vectors.
+void distributeVectors(RewriterBase &rewriter, func::FuncOp funcOp);
+
 /// Function to reorder transposes and elementwise ops.
 void reorderTranspose(RewriterBase &rewriter, func::FuncOp funcOp);
 
