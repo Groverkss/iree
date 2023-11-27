@@ -192,24 +192,13 @@ public:
             return;
           })
           .Case<vector::TransferWriteOp>([&](auto transferWriteOp) {})
+          .Case<arith::ConstantOp>([&](auto constantOp) {})
           .Default([&](auto op) {});
     });
   }
 
 private:
-  void distributeTransferWrites(vector::TransferWriteOp transferWriteOp) {
-    // Location loc = transferWriteOp.getLoc();
-
-    // // Get layout of the input vector..
-    // BlockLayoutAttr layout = analysis.getLayout(transferWriteOp.getVector());
-    // // Get the thread ids.
-    // ArrayRef<Value> threadIDs = getThreadIDs();
-    // // Iterate over the layout.
-    // layout.forAllTiles([&](ArrayRef<int64_t> batchTiles,
-    //                        ArrayRef<int64_t> distributedTiles,
-    //                        ArrayRef<int64_t> threadTiles) {
-    // });
-  }
+  void distributeTransferWrites(vector::TransferWriteOp transferWriteOp) {}
 
   void distributeTransferReads(vector::TransferReadOp transferReadOp) {
     Location loc = transferReadOp.getLoc();
