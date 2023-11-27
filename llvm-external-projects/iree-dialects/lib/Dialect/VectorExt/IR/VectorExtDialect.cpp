@@ -154,3 +154,88 @@ BlockLayoutAttr BlockLayoutAttr::permute(ArrayRef<unsigned> permutation) const {
   return BlockLayoutAttr::get(getContext(), newBatch, newDistributed,
                               newThread);
 }
+
+static void forAll(ArrayRef<int64_t> iterates,
+                   std::function<void(ArrayRef<int64_t>)> callback) {
+
+  SmallVector<int64_t> curr(iterates.size(), 0);
+
+  // Iterate over all possible batch tiles.
+  while (true) {
+    callback(curr);
+
+    // Increment the current tile.
+    bool done = false;
+    for (int64_t i = curr.size() - 1; i >= 0; --i) {
+      if (curr[i] < iterates[i] - 1) {
+        ++curr[i];
+        done = true;
+        break;
+      }
+      curr[i] = 0;
+    }
+    if (!done)
+      break;
+  }
+}
+
+void BlockLayoutAttr::forAllBatchTiles(
+    ArrayRef<int64_t> vectorShape,
+    std::function<void(ArrayRef<int64_t>)> callback) const {
+  SmallVector<int64_t> batchIterates;
+  for (int64_t i = 0; i < vectorShape.size(); ++i) {
+    batchIterates.push_back(
+        vectorShape[i] /
+        (getBatch()[i] * getDistributed()[i] * getThread()[i]));
+  }
+  forAll(batchIterates, callback);
+}
+
+void BlockLayoutAttr::forAllDistributedTiles(
+    std::function<void(ArrayRef<int64_t>)> callback) const {
+  forAll(getBatch(), callback);
+}
+
+void BlockLayoutAttr::forAllThreadTiles(
+    std::function<void(ArrayRef<int64_t>)> callback) const {
+  forAll(getDistributed(), callback);
+}
+
+void BlockLayoutAttr::forAllElementsInThreadTile(
+    std::function<void(ArrayRef<int64_t>)> callback) const {
+  forAll(getThread(), callback);
+}
+
+SmallVector<int64_t> BlockLayoutAttr::getBatchSize() const {
+  SmallVector<int64_t> batchSize;
+  for (int64_t i = 0; i < getBatch().size(); ++i) {
+    batchSize.push_back(getBatch()[i] * getDistributed()[i] * getThread()[i]);
+  }
+  return batchSize;
+}
+
+SmallVector<int64_t> BlockLayoutAttr::getDistributedSize() const {
+  SmallVector<int64_t> distributedSize;
+  for (int64_t i = 0; i < getDistributed().size(); ++i) {
+    distributedSize.push_back(getDistributed()[i] * getThread()[i]);
+  }
+  return distributedSize;
+}
+
+SmallVector<int64_t> BlockLayoutAttr::getThreadSize() const {
+  SmallVector<int64_t> threadSize;
+  for (int64_t i = 0; i < getThread().size(); ++i) {
+    threadSize.push_back(getThread()[i]);
+  }
+  return threadSize;
+}
+
+SmallVector<int64_t>
+BlockLayoutAttr::getNumBatches(ArrayRef<int64_t> vectorShape) const {
+  SmallVector<int64_t> numBatches;
+  SmallVector<int64_t> batchSize = getBatchSize();
+  for (int64_t i = 0; i < vectorShape.size(); ++i) {
+    numBatches.push_back(vectorShape[i] / batchSize[i]);
+  }
+  return numBatches;
+}

@@ -51,6 +51,18 @@ static MMAType getMMAType(ArrayRef<int64_t> aShape, ArrayRef<int64_t> bShape,
   return MMAType::NONE;
 }
 
+static SmallVector<int64_t> multiplyTiles(ArrayRef<int64_t> tilesA,
+                                          ArrayRef<int64_t> tilesB) {
+  // TODO: Generalize.
+  return {tilesA[0] * tilesB[0], tilesA[1] * tilesB[1]};
+}
+
+static SmallVector<int64_t> divideTiles(ArrayRef<int64_t> tilesA,
+                                        ArrayRef<int64_t> tilesB) {
+  // TODO: Generalize.
+  return {tilesA[0] / tilesB[0], tilesA[1] / tilesB[1]};
+}
+
 static std::array<int64_t, 2> getMMACanonicalShape(MMAType mmaType,
                                                    MMAMatrixType matrixType) {
   switch (mmaType) {
@@ -67,13 +79,6 @@ static std::array<int64_t, 2> getMMACanonicalShape(MMAType mmaType,
   default:
     return {};
   }
-}
-
-static std::array<int64_t, 2>
-getMMABatchTile(ArrayRef<int64_t> vectorShape,
-                ArrayRef<int64_t> canonicalShape) {
-  return {vectorShape[0] / canonicalShape[0],
-          vectorShape[1] / canonicalShape[1]};
 }
 
 static bool isMatmulTransposeB(vector::ContractionOp contractOp) {
@@ -114,8 +119,9 @@ static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
       if (mmaType == MMAType::NONE)
         return WalkResult::advance();
 
-      SmallVector<LayoutDimension> dims;
-      SmallVector<int64_t> shapes;
+      std::array<int64_t, 2> threadTile = {1, 2};
+
+      std::array<int64_t, 2> distributedTile = {8, 4};
 
       std::array<int64_t, 2> canonicalShapeA =
           getMMACanonicalShape(mmaType, MMAMatrixType::AMatrix);
@@ -124,30 +130,24 @@ static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
       std::array<int64_t, 2> canonicalShapeC =
           getMMACanonicalShape(mmaType, MMAMatrixType::CMatrix);
 
-      std::array<int64_t, 2> batchTileA =
-          getMMABatchTile(aShape, canonicalShapeA);
-      std::array<int64_t, 2> batchTileB =
-          getMMABatchTile(bShape, canonicalShapeB);
-      std::array<int64_t, 2> batchTileC =
-          getMMABatchTile(cShape, canonicalShapeC);
-
-      std::array<int64_t, 2> threadTile = {1, 2};
-
-      std::array<int64_t, 2> distributedTileA = {2, 2};
-      std::array<int64_t, 2> distributedTileB = {2, 1};
-      std::array<int64_t, 2> distributedTileC = {1, 2};
+      SmallVector<int64_t> batchTileA = divideTiles(
+          canonicalShapeA, multiplyTiles(distributedTile, threadTile));
+      SmallVector<int64_t> batchTileB = divideTiles(
+          canonicalShapeB, multiplyTiles(distributedTile, threadTile));
+      SmallVector<int64_t> batchTileC = divideTiles(
+          canonicalShapeC, multiplyTiles(distributedTile, threadTile));
 
       // --------- A-matrix
       BlockLayoutAttr nvidiaMMASyncLayoutA =
-          BlockLayoutAttr::get(ctx, batchTileA, distributedTileA, threadTile);
+          BlockLayoutAttr::get(ctx, batchTileA, distributedTile, threadTile);
 
       // --------- B-matrix
       BlockLayoutAttr nvidiaMMASyncLayoutB =
-          BlockLayoutAttr::get(ctx, batchTileB, distributedTileB, threadTile);
+          BlockLayoutAttr::get(ctx, batchTileB, distributedTile, threadTile);
 
       // --------- C-matrix
       BlockLayoutAttr nvidiaMMASyncLayoutC =
-          BlockLayoutAttr::get(ctx, batchTileC, distributedTileC, threadTile);
+          BlockLayoutAttr::get(ctx, batchTileC, distributedTile, threadTile);
 
       // Set layout for A and B matrix.
       analysis.setAnchor(contractOp.getLhs(), nvidiaMMASyncLayoutA);
@@ -165,47 +165,175 @@ namespace {
 
 class VectorDistribution {
 public:
-  VectorDistribution(Operation *root, RewriterBase &rewriter)
-      : root(root), analysis(root), rewriter(rewriter) {}
+  VectorDistribution(func::FuncOp root, RewriterBase &rewriter)
+      : root(root), analysis(root), rewriter(rewriter) {
+    setAnchorOps(analysis, root);
+    if (failed(analysis.run()))
+      return;
+
+    root->walk([&](Operation *op) {
+      for (auto [index, operand] : llvm::enumerate(op->getResults())) {
+        HighDimLayout layout = analysis.getLayout(operand);
+        if (layout) {
+          op->setAttr(("layout" + std::to_string(index)), layout);
+        }
+      }
+    });
+  }
 
   void distribute() {
     root->walk([&](Operation *op) {
+      rewriter.setInsertionPoint(op);
+
       TypeSwitch<Operation *, void>(op)
           .Case<vector::ContractionOp>([&](auto contractOp) {})
-          .Case<vector::TransferReadOp>([&](auto transferReadOp) {})
+          .Case<vector::TransferReadOp>([&](auto transferReadOp) {
+            distributeTransferReads(transferReadOp);
+            return;
+          })
           .Case<vector::TransferWriteOp>([&](auto transferWriteOp) {})
           .Default([&](auto op) {});
     });
   }
 
 private:
-  Operation *root;
+  void distributeTransferWrites(vector::TransferWriteOp transferWriteOp) {
+    // Location loc = transferWriteOp.getLoc();
+
+    // // Get layout of the input vector..
+    // BlockLayoutAttr layout = analysis.getLayout(transferWriteOp.getVector());
+    // // Get the thread ids.
+    // ArrayRef<Value> threadIDs = getThreadIDs();
+    // // Iterate over the layout.
+    // layout.forAllTiles([&](ArrayRef<int64_t> batchTiles,
+    //                        ArrayRef<int64_t> distributedTiles,
+    //                        ArrayRef<int64_t> threadTiles) {
+    // });
+  }
+
+  void distributeTransferReads(vector::TransferReadOp transferReadOp) {
+    Location loc = transferReadOp.getLoc();
+    TypedValue<ShapedType> source = transferReadOp.getSource();
+    TypedValue<VectorType> simdVector = transferReadOp.getResult();
+    SmallVector<Value> indices = transferReadOp.getIndices();
+    Type elType = simdVector.getType().getElementType();
+    ArrayRef<int64_t> simdShape = simdVector.getType().getShape();
+
+    // Get layout of the result vector.
+    BlockLayoutAttr layout = analysis.getLayout(simdVector);
+    if (!layout) {
+      return;
+    }
+
+    // Vector accumulator: [batchSize, distributedSize]
+    SmallVector<int64_t> numBatches = layout.getNumBatches(simdShape);
+    ArrayRef<int64_t> numDistributed = layout.getBatch();
+    ArrayRef<int64_t> simtVecShape = layout.getThread();
+    SmallVector<int64_t> vectorShape;
+    vectorShape.append(numBatches.begin(), numBatches.end());
+    vectorShape.append(numDistributed.begin(), numDistributed.end());
+    vectorShape.append(simtVecShape.begin(), simtVecShape.end());
+    VectorType vecType = VectorType::get(vectorShape, elType);
+    Value vector = rewriter.create<arith::ConstantOp>(
+        loc, vecType, rewriter.getZeroAttr(vecType));
+
+    // Iterate over all batches.
+    layout.forAllBatchTiles(simdShape, [&](ArrayRef<int64_t> batch) {
+      // Iterate over all distributed tiles in the batch.
+      layout.forAllDistributedTiles([&](ArrayRef<int64_t> distributed) {
+        // This tile will be distributed over threads.
+        // Iterate over all elements in the thread tile.
+        layout.forAllElementsInThreadTile([&](ArrayRef<int64_t> elms) {
+          SmallVector<Value> newIndices =
+              getDistributedIndices(loc, indices, batch, distributed, elms,
+                                    transferReadOp.getPermutationMap(), layout);
+          Value load = rewriter.create<memref::LoadOp>(loc, source, newIndices);
+          VectorType loadedVectorType = VectorType::get({1}, elType);
+          Value loadedVector =
+              rewriter.create<vector::BroadcastOp>(loc, loadedVectorType, load);
+          // vector.insert_strided_slice offsets: [batch, distributed, elms]
+          SmallVector<int64_t> offsets;
+          offsets.append(batch.begin(), batch.end());
+          offsets.append(distributed.begin(), distributed.end());
+          offsets.append(elms.begin(), elms.end());
+          SmallVector<int64_t> strides{1};
+          vector = rewriter.create<vector::InsertStridedSliceOp>(
+              loc, loadedVector, vector, offsets, strides);
+        });
+      });
+    });
+
+    simdToSimt.map(transferReadOp.getResult(), vector);
+  }
+
+  void distributeContractions(vector::ContractionOp contractionOp) {}
+
+  /// Get indices of transfer op after distribution.
+  SmallVector<Value>
+  getDistributedIndices(Location loc, ArrayRef<Value> indices,
+                        ArrayRef<int64_t> batch, ArrayRef<int64_t> distributed,
+                        ArrayRef<int64_t> thread, AffineMap permutationMap,
+                        BlockLayoutAttr layout) {
+    // Get tiles.
+    ArrayRef<int64_t> batchTile = layout.getBatch();
+    ArrayRef<int64_t> distributedTile = layout.getDistributed();
+    ArrayRef<int64_t> threadTile = layout.getThread();
+
+    auto computeDim = [&](int64_t dim) {
+      // thread +
+      // gpuIdx * threadTile +
+      // distributedIdx * (distributedTile * threadTile) +
+      // batchIdx * (batchTile * distributedTile * threadTile)
+      AffineExpr threadIdx = rewriter.getAffineDimExpr(dim);
+      return (thread[dim]) + (threadIdx * threadTile[dim]) +
+             (distributed[dim] * distributedTile[dim] * threadTile[dim]) +
+             (batch[dim] * batchTile[dim] * distributedTile[dim] *
+              threadTile[dim]);
+    };
+
+    SmallVector<Value> offsets(batch.size());
+    for (int64_t i = 0; i < batch.size(); ++i) {
+      AffineMap map =
+          AffineMap::get(3, 0, computeDim(i), rewriter.getContext());
+      offsets[i] =
+          rewriter.create<affine::AffineApplyOp>(loc, map, getThreadIds());
+    }
+
+    SmallVector<Value> newIndices{indices.begin(), indices.end()};
+    int64_t laneDim = 0;
+    for (AffineExpr expr : permutationMap.getResults()) {
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr)
+        continue;
+      unsigned pos = dimExpr.getPosition();
+      newIndices[pos] = rewriter.create<arith::AddIOp>(loc, offsets[laneDim++],
+                                                       newIndices[pos]);
+    }
+    return newIndices;
+  }
+
+  ArrayRef<Value> getThreadIds() {
+    if (threadIds.empty()) {
+      threadIds = {
+          rewriter.create<gpu::ThreadIdOp>(root.getLoc(), gpu::Dimension::x),
+          rewriter.create<gpu::ThreadIdOp>(root.getLoc(), gpu::Dimension::y),
+          rewriter.create<gpu::ThreadIdOp>(root.getLoc(), gpu::Dimension::z)};
+    }
+    return threadIds;
+  }
+
+  func::FuncOp root;
   VectorLayoutAnalysis analysis;
   RewriterBase &rewriter;
   IRMapping simdToSimt;
-};
+  SmallVector<Value> threadIds;
+}; // namespace
 
 } // namespace
 
-static void distributeContracts(vector::ContractionOp contractOp,
-                                VectorLayoutAnalysis &analysis) {}
-
 void distributeVectors(RewriterBase &rewriter, func::FuncOp funcOp) {
-  VectorLayoutAnalysis analysis(funcOp);
-  setAnchorOps(analysis, funcOp);
-  if (failed(analysis.run())) {
-    funcOp.emitError("layout analysis failed");
-    return;
-  }
-
-  funcOp.walk([&](Operation *op) {
-    for (auto [index, operand] : llvm::enumerate(op->getResults())) {
-      HighDimLayout layout = analysis.getLayout(operand);
-      if (layout) {
-        op->setAttr(("layout" + std::to_string(index)), layout);
-      }
-    }
-  });
+  VectorDistribution distribution(funcOp, rewriter);
+  distribution.distribute();
 }
 
 } // namespace mlir::iree_compiler

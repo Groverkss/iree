@@ -129,8 +129,21 @@ def BlockLayoutAttr : IREEVectorExt_Attr<"BlockLayout"> {
   let genVerifyDecl = 0;
   let extraClassDeclaration = [{
     bool isValidLayout(ArrayRef<int64_t> vector) const;
+
     BlockLayoutAttr project(ArrayRef<bool> projectedDims) const;
     BlockLayoutAttr permute(ArrayRef<unsigned> permutation) const;
+
+    void forAllBatchTiles(ArrayRef<int64_t> vectorShape, std::function<void(ArrayRef<int64_t>)> callback) const;
+    void forAllDistributedTiles(std::function<void(ArrayRef<int64_t>)> callback) const;
+    void forAllThreadTiles(std::function<void(ArrayRef<int64_t>)> callback) const;
+    void forAllElementsInThreadTile(std::function<void(ArrayRef<int64_t>)> callback) const;
+
+    // Returns size in terms of elements.
+    SmallVector<int64_t> getBatchSize() const;
+    SmallVector<int64_t> getDistributedSize() const;
+    SmallVector<int64_t> getThreadSize() const;
+
+    SmallVector<int64_t> getNumBatches(ArrayRef<int64_t> vectorShape) const;
   }];
 }
 
