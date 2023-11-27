@@ -17,26 +17,37 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Matchers.h"
 
-#define DEBUG_TYPE "iree-llvmgpu-vector-distribution"
+#define DEBUG_TYPE_ANCHORS "iree-llvmgpu-vector-distribution-anchors"
 
 using namespace mlir::iree_compiler::IREE::VectorExt;
 
 namespace mlir::iree_compiler {
 
 enum class MMAType {
-  M16N8K16,
-  NONE,
+  NONE = 0,
+  M16N8K16 = 1,
 };
 
 enum class MMAMatrixType { AMatrix, BMatrix, CMatrix };
 
 static MMAType getMMAType(ArrayRef<int64_t> aShape, ArrayRef<int64_t> bShape,
                           ArrayRef<int64_t> cShape) {
-  if ((aShape[0] % 16 == 0) && (aShape[1] % 16 == 0) && (cShape[0] % 16 == 0) &&
-      (cShape[1] % 8 == 0)) {
-    if ((bShape[0] % 16 == 0) && (bShape[1] % 8 == 0))
-      return MMAType::M16N8K16;
+
+  if (aShape.size() != 2 || bShape.size() != 2 || cShape.size() != 2)
+    return MMAType::NONE;
+
+  // M --> 16
+  // N --> 8
+  // K --> 16
+  // Assuming A is MxK, B is NxK, C is MxN
+  if (aShape[0] % 16 == 0 && aShape[1] % 16 == 0) {
+    if (bShape[0] % 8 == 0 && bShape[1] % 16 == 0) {
+      if (cShape[0] % 16 == 0 && cShape[1] % 8 == 0) {
+        return MMAType::M16N8K16;
+      }
+    }
   }
+
   return MMAType::NONE;
 }
 
@@ -87,9 +98,12 @@ static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
       ArrayRef<int64_t> aShape = contractOp.getLhsType().getShape();
       ArrayRef<int64_t> bShape = contractOp.getRhsType().getShape();
       ArrayRef<int64_t> cShape =
-          cast<VectorType>(contractOp.getResultType()).getShape();
+          cast<VectorType>(contractOp.getAccType()).getShape();
 
       MMAType mmaType = getMMAType(aShape, bShape, cShape);
+      DEBUG_WITH_TYPE(DEBUG_TYPE_ANCHORS,
+                      llvm::dbgs()
+                          << "Found MMA with type: " << (int)mmaType << "\n");
       if (mmaType == MMAType::NONE)
         return WalkResult::advance();
 
@@ -182,6 +196,35 @@ static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
   });
 }
 
+namespace {
+
+class VectorDistribution {
+public:
+  VectorDistribution(Operation *root, RewriterBase &rewriter)
+      : root(root), analysis(root), rewriter(rewriter) {}
+
+  void distribute() {
+    root->walk([&](Operation *op) {
+      TypeSwitch<Operation *, void>(op)
+          .Case<vector::ContractionOp>([&](auto contractOp) {})
+          .Case<vector::TransferReadOp>([&](auto transferReadOp) {})
+          .Case<vector::TransferWriteOp>([&](auto transferWriteOp) {})
+          .Default([&](auto op) {});
+    });
+  }
+
+private:
+  Operation *root;
+  VectorLayoutAnalysis analysis;
+  RewriterBase &rewriter;
+  IRMapping simdToSimt;
+};
+
+} // namespace
+
+static void distributeContracts(vector::ContractionOp contractOp,
+                                VectorLayoutAnalysis &analysis) {}
+
 void distributeVectors(RewriterBase &rewriter, func::FuncOp funcOp) {
   VectorLayoutAnalysis analysis(funcOp);
   setAnchorOps(analysis, funcOp);
@@ -198,8 +241,6 @@ void distributeVectors(RewriterBase &rewriter, func::FuncOp funcOp) {
       }
     }
   });
-
-  return;
 }
 
 } // namespace mlir::iree_compiler
