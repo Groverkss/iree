@@ -120,3 +120,37 @@ VectorLayoutInterface LayoutAttr::permute(ArrayRef<int64_t> permutation) const {
   }
   return LayoutAttr::get(getContext(), newLayouts);
 }
+
+bool BlockLayoutAttr::isValidLayout(ArrayRef<int64_t> shape) const {
+  return true;
+}
+
+BlockLayoutAttr BlockLayoutAttr::project(ArrayRef<bool> projectedDims) const {
+  // Project the given dim in each field.
+  SmallVector<int64_t> newBatch;
+  SmallVector<int64_t> newDistributed;
+  SmallVector<int64_t> newThread;
+  for (auto [index, projected] : llvm::enumerate(projectedDims)) {
+    if (!projected) {
+      newBatch.push_back(getBatch()[index]);
+      newDistributed.push_back(getDistributed()[index]);
+      newThread.push_back(getThread()[index]);
+    }
+  }
+  return BlockLayoutAttr::get(getContext(), newBatch, newDistributed,
+                              newThread);
+}
+
+BlockLayoutAttr BlockLayoutAttr::permute(ArrayRef<unsigned> permutation) const {
+  // Permute the given dim in each field.
+  SmallVector<int64_t> newBatch;
+  SmallVector<int64_t> newDistributed;
+  SmallVector<int64_t> newThread;
+  for (unsigned index : permutation) {
+    newBatch.push_back(getBatch()[index]);
+    newDistributed.push_back(getDistributed()[index]);
+    newThread.push_back(getThread()[index]);
+  }
+  return BlockLayoutAttr::get(getContext(), newBatch, newDistributed,
+                              newThread);
+}

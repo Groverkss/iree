@@ -21,17 +21,20 @@ namespace iree_compiler {
 class PropagateLayout;
 class EnforceLayout;
 
-using HighDimLayout = IREE::VectorExt::LayoutAttr;
+using HighDimLayout = IREE::VectorExt::BlockLayoutAttr;
 SmallVector<int64_t> getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout);
 
 class DistributionLayout : public AnalysisState {
 public:
   explicit DistributionLayout(Value val) : AnalysisState(val) {}
 
-  Value getValue() const {
+  TypedValue<VectorType> getValue() const {
     ProgramPoint point = getPoint();
     assert(isa<Value>(point) && "expected program point to be a value");
-    return cast<Value>(point);
+    Value val = cast<Value>(point);
+    assert(isa<VectorType>(val.getType()) &&
+           "expected value to be of vector type");
+    return cast<TypedValue<VectorType>>(val);
   }
 
   /// TODO: This currently, creates a new value but doesn't replace it with the
@@ -92,8 +95,7 @@ private:
   /// should only be used when you know there will be no layout conflicts.
   /// Otherwise, the resolve-like functions should be used.
   void setInnerLayout(const HighDimLayout &layout) {
-    assert(!layout || (layout.getLayouts().size() ==
-                       getValue().getType().cast<VectorType>().getRank()));
+    assert(!layout || layout.isValidLayout(getValue().getType().getShape()));
     vectorLayout = layout;
   }
 

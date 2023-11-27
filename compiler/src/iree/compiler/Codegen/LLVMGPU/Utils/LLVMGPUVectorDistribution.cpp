@@ -51,8 +51,8 @@ static MMAType getMMAType(ArrayRef<int64_t> aShape, ArrayRef<int64_t> bShape,
   return MMAType::NONE;
 }
 
-static std::array<int, 2> getMMACanonicalShape(MMAType mmaType,
-                                               MMAMatrixType matrixType) {
+static std::array<int64_t, 2> getMMACanonicalShape(MMAType mmaType,
+                                                   MMAMatrixType matrixType) {
   switch (mmaType) {
   case MMAType::M16N8K16:
     switch (matrixType) {
@@ -67,6 +67,13 @@ static std::array<int, 2> getMMACanonicalShape(MMAType mmaType,
   default:
     return {};
   }
+}
+
+static std::array<int64_t, 2>
+getMMABatchTile(ArrayRef<int64_t> vectorShape,
+                ArrayRef<int64_t> canonicalShape) {
+  return {vectorShape[0] / canonicalShape[0],
+          vectorShape[1] / canonicalShape[1]};
 }
 
 static bool isMatmulTransposeB(vector::ContractionOp contractOp) {
@@ -107,82 +114,40 @@ static void setAnchorOps(VectorLayoutAnalysis &analysis, Operation *op) {
       if (mmaType == MMAType::NONE)
         return WalkResult::advance();
 
-      auto constructLayout = [&](int64_t canonicalShape, int64_t vectorShape,
-                                 ArrayRef<LayoutDimension> dims,
-                                 SmallVectorImpl<int64_t> &shapes) {
-        int64_t batchDim = vectorShape / canonicalShape;
-        shapes.insert(shapes.begin(), batchDim);
-        SmallVector<LayoutDimensionAttr> labels;
-        auto toAttr = [&](LayoutDimension dim) {
-          return LayoutDimensionAttr::get(ctx, dim);
-        };
-        std::transform(dims.begin(), dims.end(), std::back_inserter(labels),
-                       toAttr);
-        return PerDimLayoutAttr::get(ctx, labels, shapes);
-      };
-
       SmallVector<LayoutDimension> dims;
       SmallVector<int64_t> shapes;
 
-      std::array<int, 2> canonicalShapeA =
+      std::array<int64_t, 2> canonicalShapeA =
           getMMACanonicalShape(mmaType, MMAMatrixType::AMatrix);
-      std::array<int, 2> canonicalShapeB =
+      std::array<int64_t, 2> canonicalShapeB =
           getMMACanonicalShape(mmaType, MMAMatrixType::BMatrix);
-      std::array<int, 2> canonicalShapeC =
+      std::array<int64_t, 2> canonicalShapeC =
           getMMACanonicalShape(mmaType, MMAMatrixType::CMatrix);
 
+      std::array<int64_t, 2> batchTileA =
+          getMMABatchTile(aShape, canonicalShapeA);
+      std::array<int64_t, 2> batchTileB =
+          getMMABatchTile(bShape, canonicalShapeB);
+      std::array<int64_t, 2> batchTileC =
+          getMMABatchTile(cShape, canonicalShapeC);
+
+      std::array<int64_t, 2> threadTile = {1, 2};
+
+      std::array<int64_t, 2> distributedTileA = {2, 2};
+      std::array<int64_t, 2> distributedTileB = {2, 1};
+      std::array<int64_t, 2> distributedTileC = {1, 2};
+
       // --------- A-matrix
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 2};
-      PerDimLayoutAttr rowLayout =
-          constructLayout(canonicalShapeA[0], aShape[0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      PerDimLayoutAttr colLayout =
-          constructLayout(canonicalShapeA[1], aShape[1], dims, shapes);
-
-      SmallVector<PerDimLayoutAttr> layouts;
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutA = LayoutAttr::get(ctx, layouts);
+      BlockLayoutAttr nvidiaMMASyncLayoutA =
+          BlockLayoutAttr::get(ctx, batchTileA, distributedTileA, threadTile);
 
       // --------- B-matrix
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORZ};
-      shapes = {8, 1};
-      rowLayout = constructLayout(canonicalShapeB[0], bShape[0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORY};
-      shapes = {2, 4, 2};
-      colLayout = constructLayout(canonicalShapeB[1], bShape[1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutB = LayoutAttr::get(ctx, layouts);
+      BlockLayoutAttr nvidiaMMASyncLayoutB =
+          BlockLayoutAttr::get(ctx, batchTileB, distributedTileB, threadTile);
 
       // --------- C-matrix
-      dims = {LayoutDimension::BATCHX, LayoutDimension::LANEY,
-              LayoutDimension::VECTORY};
-      shapes = {8, 2};
-      rowLayout = constructLayout(canonicalShapeC[0], cShape[0], dims, shapes);
-
-      dims = {LayoutDimension::BATCHY, LayoutDimension::VECTORX,
-              LayoutDimension::LANEX, LayoutDimension::VECTORZ};
-      shapes = {2, 4, 1};
-      colLayout = constructLayout(canonicalShapeC[1], cShape[1], dims, shapes);
-
-      layouts.clear();
-      layouts.push_back(rowLayout);
-      layouts.push_back(colLayout);
-
-      LayoutAttr nvidiaMMASyncLayoutC = LayoutAttr::get(ctx, layouts);
+      BlockLayoutAttr nvidiaMMASyncLayoutC =
+          BlockLayoutAttr::get(ctx, batchTileC, distributedTileC, threadTile);
 
       // Set layout for A and B matrix.
       analysis.setAnchor(contractOp.getLhs(), nvidiaMMASyncLayoutA);
@@ -234,7 +199,7 @@ void distributeVectors(RewriterBase &rewriter, func::FuncOp funcOp) {
   }
 
   funcOp.walk([&](Operation *op) {
-    for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
+    for (auto [index, operand] : llvm::enumerate(op->getResults())) {
       HighDimLayout layout = analysis.getLayout(operand);
       if (layout) {
         op->setAttr(("layout" + std::to_string(index)), layout);

@@ -114,5 +114,25 @@ def LayoutAttr : IREEVectorExt_Attr<"Layout",
   }];
 }
 
+def BlockLayoutAttr : IREEVectorExt_Attr<"BlockLayout"> {
+  let mnemonic = "block_layout";
+  let summary = [{block vector register layout for a given vector}];
+  let description = [{
+    This layout contains a block vector register layout.
+  }];
+  let parameters = (ins
+    ArrayRefParameter<"int64_t", "batch tile">:$batch,
+    ArrayRefParameter<"int64_t", "distributed tile">:$distributed,
+    ArrayRefParameter<"int64_t", "thread tile">:$thread
+  );
+  let assemblyFormat = "`<``<`$batch`>` `<`$distributed`>` `<`$thread`>``>`";
+  let genVerifyDecl = 0;
+  let extraClassDeclaration = [{
+    bool isValidLayout(ArrayRef<int64_t> vector) const;
+    BlockLayoutAttr project(ArrayRef<bool> projectedDims) const;
+    BlockLayoutAttr permute(ArrayRef<unsigned> permutation) const;
+  }];
+}
+
 #endif // IREE_DIALECT_VECTOREXT_BASE
 
