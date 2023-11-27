@@ -166,9 +166,9 @@ static void propagateLayoutToTransposeOp(
 
   // Build a transposed layout.
   SmallVector<unsigned> permutation;
-  ArrayAttr transp = transpose.getTransp();
-  for (Attribute attr : transp) {
-    permutation.push_back(attr.cast<IntegerAttr>().getInt());
+  ArrayRef<int64_t> perm = transpose.getPermutation();
+  for (int64_t index : perm) {
+    permutation.push_back(index);
   }
   HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
 
@@ -266,9 +266,9 @@ static void enforceLayoutToTransposeOp(
 
   // Build a transposed layout.
   SmallVector<unsigned> permutation;
-  ArrayAttr transp = transpose.getTransp();
-  for (Attribute attr : transp) {
-    permutation.push_back(attr.cast<IntegerAttr>().getInt());
+  ArrayRef<int64_t> perm = transpose.getPermutation();
+  for (int64_t index : perm) {
+    permutation.push_back(index);
   }
   HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
 
