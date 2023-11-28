@@ -21,7 +21,7 @@ namespace iree_compiler {
 class PropagateLayout;
 class EnforceLayout;
 
-using HighDimLayout = IREE::VectorExt::VectorLayoutInterface;
+using VectorLayoutInterface = IREE::VectorExt::VectorLayoutInterface;
 
 class DistributionLayout : public AnalysisState {
 public:
@@ -41,13 +41,13 @@ public:
   /// that better.
   ChangeResult resolveWithPossibleConflict(const DistributionLayout *rhs,
                                            OpOperand &operand);
-  ChangeResult resolveWithPossibleConflict(const HighDimLayout &rhs,
+  ChangeResult resolveWithPossibleConflict(const VectorLayoutInterface &rhs,
                                            OpOperand &operand);
 
   ChangeResult resolve(const DistributionLayout *rhs);
-  ChangeResult resolve(const HighDimLayout &rhs);
+  ChangeResult resolve(const VectorLayoutInterface &rhs);
 
-  HighDimLayout getInnerLayout() const { return vectorLayout; }
+  VectorLayoutInterface getInnerLayout() const { return vectorLayout; }
 
   bool isUninitialized() const { return !vectorLayout; }
   bool hasLayout() const { return !isUninitialized(); }
@@ -88,18 +88,18 @@ private:
   /// Attempt to resolve the current lattice with the given lattice. Returns if
   /// the current layout was not changed, changed or if there was a layout
   /// conflict.
-  ResolutionResult doResolution(const HighDimLayout &rhs);
+  ResolutionResult doResolution(const VectorLayoutInterface &rhs);
 
   /// Set the layout for this lattice element to the given layout. This function
   /// should only be used when you know there will be no layout conflicts.
   /// Otherwise, the resolve-like functions should be used.
-  void setInnerLayout(const HighDimLayout &layout) {
+  void setInnerLayout(const VectorLayoutInterface &layout) {
     assert(!layout || layout.isValidLayout(getValue().getType().getShape()));
     vectorLayout = layout;
   }
 
   /// The layout of the vector SSA Value.
-  HighDimLayout vectorLayout;
+  VectorLayoutInterface vectorLayout;
 
   /// Each lattice element stores a pointer to the analysis that work on it so
   /// it can notify them when it changes.
@@ -110,7 +110,7 @@ private:
 class PropagateLayout : public DataFlowAnalysis {
 public:
   explicit PropagateLayout(DataFlowSolver &solver,
-                           DenseMap<Value, HighDimLayout> &anchors,
+                           DenseMap<Value, VectorLayoutInterface> &anchors,
                            MLIRContext *ctx)
       : DataFlowAnalysis(solver), anchors(anchors), ctx(ctx) {}
 
@@ -121,7 +121,7 @@ public:
   /// Register a new value to be part of the dataflow analysis. The value should
   /// not be part of the analysis already. This is used for new values that are
   /// created.
-  void registerNewValue(Value val, const HighDimLayout &layout);
+  void registerNewValue(Value val, const VectorLayoutInterface &layout);
 
   friend class DistributionLayout;
 
@@ -134,7 +134,7 @@ private:
 
   DistributionLayout *getLatticeElement(Value val);
 
-  DenseMap<Value, HighDimLayout> anchors;
+  DenseMap<Value, VectorLayoutInterface> anchors;
 
   MLIRContext *ctx;
 };
@@ -148,7 +148,7 @@ public:
 
   LogicalResult visit(ProgramPoint point) override;
 
-  void registerNewValue(Value val, const HighDimLayout &layout);
+  void registerNewValue(Value val, const VectorLayoutInterface &layout);
 
   friend class DistributionLayout;
 
@@ -170,16 +170,16 @@ public:
 
   template <typename T>
   void setAnchor(Value val, T layout) {
-    assert(isa<HighDimLayout>(layout) &&
+    assert(isa<VectorLayoutInterface>(layout) &&
            "expected layout to implement VectorLayoutInterface");
-    anchors[val] = cast<HighDimLayout>(layout);
+    anchors[val] = cast<VectorLayoutInterface>(layout);
   }
 
   LogicalResult run();
 
   template <typename T>
   T getLayout(Value val) {
-    HighDimLayout layout = getLayout(val);
+    VectorLayoutInterface layout = getLayout(val);
     if (!layout) {
       return T();
     }
@@ -190,10 +190,10 @@ public:
   }
 
 private:
-  HighDimLayout getLayout(Value val);
+  VectorLayoutInterface getLayout(Value val);
 
   Operation *root;
-  DenseMap<Value, HighDimLayout> anchors;
+  DenseMap<Value, VectorLayoutInterface> anchors;
   DataFlowSolver solver;
 };
 

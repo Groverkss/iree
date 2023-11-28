@@ -37,7 +37,8 @@ public:
 
     root->walk([&](Operation *op) {
       for (auto [index, operand] : llvm::enumerate(op->getResults())) {
-        HighDimLayout layout = analysis.getLayout<BlockLayoutAttr>(operand);
+        VectorLayoutInterface layout =
+            analysis.getLayout<BlockLayoutAttr>(operand);
         if (layout) {
           op->setAttr(("layout" + std::to_string(index)), layout);
         }

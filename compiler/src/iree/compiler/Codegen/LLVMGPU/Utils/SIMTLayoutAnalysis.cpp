@@ -20,8 +20,8 @@ using namespace mlir::iree_compiler;
 using namespace mlir::iree_compiler::IREE::VectorExt;
 
 DistributionLayout::ResolutionResult
-DistributionLayout::doResolution(const HighDimLayout &rhs) {
-  HighDimLayout &lhs = vectorLayout;
+DistributionLayout::doResolution(const VectorLayoutInterface &rhs) {
+  VectorLayoutInterface &lhs = vectorLayout;
 
   // Ignore if the layout to resolve with is empty.
   if (!rhs) {
@@ -43,9 +43,8 @@ DistributionLayout::doResolution(const HighDimLayout &rhs) {
   return ResolutionResult::Conflict;
 }
 
-ChangeResult
-DistributionLayout::resolveWithPossibleConflict(const HighDimLayout &rhs,
-                                                OpOperand &opOperand) {
+ChangeResult DistributionLayout::resolveWithPossibleConflict(
+    const VectorLayoutInterface &rhs, OpOperand &opOperand) {
   ResolutionResult result = doResolution(rhs);
 
   // If there is no conflict, simply return.
@@ -93,7 +92,7 @@ DistributionLayout::resolveWithPossibleConflict(const DistributionLayout *rhs,
   return resolveWithPossibleConflict(rhs->vectorLayout, opOperand);
 }
 
-ChangeResult DistributionLayout::resolve(const HighDimLayout &rhs) {
+ChangeResult DistributionLayout::resolve(const VectorLayoutInterface &rhs) {
   ResolutionResult result = doResolution(rhs);
 
   switch (result) {
@@ -426,11 +425,11 @@ LogicalResult VectorLayoutAnalysis::run() {
   return solver.initializeAndRun(root);
 }
 
-HighDimLayout VectorLayoutAnalysis::getLayout(Value val) {
+VectorLayoutInterface VectorLayoutAnalysis::getLayout(Value val) {
   const DistributionLayout *layout =
       solver.lookupState<DistributionLayout>(val);
   if (!layout) {
-    return HighDimLayout();
+    return VectorLayoutInterface();
   }
   return layout->getInnerLayout();
 }
