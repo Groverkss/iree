@@ -17,12 +17,14 @@ iree_cc_library(
     "LLVMGPUUtils.h"
     "SIMTLayoutAnalysis.h"
     "SIMTTransferFunctions.h"
+    "VectorLayoutProvider.h"
   SRCS
     "LLVMGPULayoutAnalysisAndDistribution.cpp"
     "LLVMGPUUtils.cpp"
     "LLVMGPUVectorDistribution.cpp"
     "SIMTLayoutAnalysis.cpp"
     "SIMTTransferFunctions.cpp"
+    "VectorLayoutProvider.cpp"
   DEPS
     IREEVectorExtDialect
     LLVMSupport
