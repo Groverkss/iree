@@ -417,24 +417,6 @@ DistributionLayout *EnforceLayout::getLatticeElement(Value val) {
   return layout;
 }
 
-SmallVector<int64_t>
-mlir::iree_compiler::getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout) {
-  SmallVector<LayoutDimension> dims = {
-      LayoutDimension::BATCHX, LayoutDimension::BATCHY,
-      LayoutDimension::VECTORZ, LayoutDimension::VECTORY,
-      LayoutDimension::VECTORX};
-  SmallVector<int64_t> shape = layout.getSIMTVectorShape(dims);
-  // TODO: After a projection, the shape could be smaller.
-  if (shape.size() < dims.size())
-    return shape;
-  assert(shape.size() == dims.size());
-  // Collapse VectorZ and VectorY dimensions. This is NVIDIA specific.
-  shape[2] *= shape[3];
-  shape[3] = shape[4];
-  shape.pop_back();
-  return shape;
-}
-
 LogicalResult VectorLayoutAnalysis::run() {
   // The order of loading matters here, because propagateLayout does anchoring
   // initialization which needs the lattice to know both enforcement and
@@ -442,10 +424,6 @@ LogicalResult VectorLayoutAnalysis::run() {
   solver.load<EnforceLayout>(root->getContext());
   solver.load<PropagateLayout>(anchors, root->getContext());
   return solver.initializeAndRun(root);
-}
-
-void VectorLayoutAnalysis::setAnchor(Value val, HighDimLayout layout) {
-  anchors[val] = layout;
 }
 
 HighDimLayout VectorLayoutAnalysis::getLayout(Value val) {

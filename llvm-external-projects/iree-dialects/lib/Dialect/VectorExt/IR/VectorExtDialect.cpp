@@ -125,7 +125,8 @@ bool BlockLayoutAttr::isValidLayout(ArrayRef<int64_t> shape) const {
   return true;
 }
 
-BlockLayoutAttr BlockLayoutAttr::project(ArrayRef<bool> projectedDims) const {
+VectorLayoutInterface
+BlockLayoutAttr::project(ArrayRef<bool> projectedDims) const {
   // Project the given dim in each field.
   SmallVector<int64_t> newBatch;
   SmallVector<int64_t> newDistributed;
@@ -141,12 +142,13 @@ BlockLayoutAttr BlockLayoutAttr::project(ArrayRef<bool> projectedDims) const {
                               newThread);
 }
 
-BlockLayoutAttr BlockLayoutAttr::permute(ArrayRef<unsigned> permutation) const {
+VectorLayoutInterface
+BlockLayoutAttr::permute(ArrayRef<int64_t> permutation) const {
   // Permute the given dim in each field.
   SmallVector<int64_t> newBatch;
   SmallVector<int64_t> newDistributed;
   SmallVector<int64_t> newThread;
-  for (unsigned index : permutation) {
+  for (int64_t index : permutation) {
     newBatch.push_back(getBatch()[index]);
     newDistributed.push_back(getDistributed()[index]);
     newThread.push_back(getThread()[index]);

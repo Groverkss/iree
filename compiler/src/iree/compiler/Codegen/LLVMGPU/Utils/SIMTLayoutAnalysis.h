@@ -21,8 +21,7 @@ namespace iree_compiler {
 class PropagateLayout;
 class EnforceLayout;
 
-using HighDimLayout = IREE::VectorExt::BlockLayoutAttr;
-SmallVector<int64_t> getSIMTVectorShape(IREE::VectorExt::LayoutAttr layout);
+using HighDimLayout = IREE::VectorExt::VectorLayoutInterface;
 
 class DistributionLayout : public AnalysisState {
 public:
@@ -169,13 +168,30 @@ class VectorLayoutAnalysis {
 public:
   VectorLayoutAnalysis(Operation *root) : root(root) {}
 
-  void setAnchor(Value val, HighDimLayout layout);
+  template <typename T>
+  void setAnchor(Value val, T layout) {
+    assert(isa<HighDimLayout>(layout) &&
+           "expected layout to implement VectorLayoutInterface");
+    anchors[val] = cast<HighDimLayout>(layout);
+  }
 
   LogicalResult run();
 
-  HighDimLayout getLayout(Value val);
+  template <typename T>
+  T getLayout(Value val) {
+    HighDimLayout layout = getLayout(val);
+    if (!layout) {
+      return T();
+    }
+
+    assert(isa<T>(layout) &&
+           "expected layout to implement VectorLayoutInterface");
+    return cast<T>(layout);
+  }
 
 private:
+  HighDimLayout getLayout(Value val);
+
   Operation *root;
   DenseMap<Value, HighDimLayout> anchors;
   DataFlowSolver solver;

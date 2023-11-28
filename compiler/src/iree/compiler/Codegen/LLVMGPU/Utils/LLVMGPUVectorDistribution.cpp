@@ -173,7 +173,7 @@ public:
 
     root->walk([&](Operation *op) {
       for (auto [index, operand] : llvm::enumerate(op->getResults())) {
-        HighDimLayout layout = analysis.getLayout(operand);
+        HighDimLayout layout = analysis.getLayout<BlockLayoutAttr>(operand);
         if (layout) {
           op->setAttr(("layout" + std::to_string(index)), layout);
         }
@@ -209,7 +209,7 @@ private:
     ArrayRef<int64_t> simdShape = simdVector.getType().getShape();
 
     // Get layout of the result vector.
-    BlockLayoutAttr layout = analysis.getLayout(simdVector);
+    BlockLayoutAttr layout = analysis.getLayout<BlockLayoutAttr>(simdVector);
     if (!layout) {
       return;
     }

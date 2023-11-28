@@ -167,10 +167,7 @@ static void propagateLayoutToTransposeOp(
   // Build a transposed layout.
   SmallVector<unsigned> permutation;
   ArrayRef<int64_t> perm = transpose.getPermutation();
-  for (int64_t index : perm) {
-    permutation.push_back(index);
-  }
-  HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
+  HighDimLayout permutedLayout = result->getInnerLayout().permute(perm);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = result->resolve(permutedLayout);
@@ -267,10 +264,7 @@ static void enforceLayoutToTransposeOp(
   // Build a transposed layout.
   SmallVector<unsigned> permutation;
   ArrayRef<int64_t> perm = transpose.getPermutation();
-  for (int64_t index : perm) {
-    permutation.push_back(index);
-  }
-  HighDimLayout permutedLayout = result->getInnerLayout().permute(permutation);
+  HighDimLayout permutedLayout = result->getInnerLayout().permute(perm);
 
   // Try to resolve with the transposed layout.
   ChangeResult changed = value->resolveWithPossibleConflict(
