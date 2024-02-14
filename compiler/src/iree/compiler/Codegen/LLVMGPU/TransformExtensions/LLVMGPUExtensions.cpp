@@ -1516,6 +1516,11 @@ transform_dialect::TestAMDGPUContractionDistribution::applyToOne(
     transform::TransformState &state) {
   TestVectorLayoutOptions options(target);
   RewritePatternSet patterns(target.getContext());
+  rewriter.setInsertionPointToStart(&target.getFunctionBody().front());
+  Value laneId =
+      rewriter.create<gpu::ThreadIdOp>(target.getLoc(), gpu::Dimension::x);
+  populateGPUDistributionPatterns(patterns);
+  populateGPUDistributionLayoutAttrPatterns(laneId, patterns);
   populateAMDGPUDistributionPatterns(patterns);
   distributeVectorOps(target, patterns, options);
   return DiagnosedSilenceableFailure::success();
