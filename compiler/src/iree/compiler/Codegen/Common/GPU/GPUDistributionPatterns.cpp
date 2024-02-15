@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Verifier.h"
@@ -696,7 +697,6 @@ struct DistributeBroadcastLayoutAttr final
       broadcastIterator.maybeFreezeAndConcatenate(parallelState);
       broadcastIterator.apply([&](const LayoutIterator::State &broadcastState) {
         SmallVector<int64_t> resultIndices = broadcastState.computeSIMTIndex();
-
         accumulator = rewriter.create<vector::InsertOp>(loc, value, accumulator,
                                                         resultIndices);
       });
@@ -828,7 +828,11 @@ void populateGPUDistributionPatterns(RewritePatternSet &patterns) {
   patterns.add<DistributeElementwise<arith::MulIOp>,
                DistributeElementwise<arith::MulFOp>,
                DistributeElementwise<arith::AddIOp>,
-               DistributeElementwise<arith::AddFOp>>(patterns.getContext());
+               DistributeElementwise<arith::AddFOp>,
+               DistributeElementwise<arith::TruncFOp>,
+               DistributeElementwise<arith::DivFOp>,
+               DistributeElementwise<arith::SubFOp>,
+               DistributeElementwise<math::Exp2Op>>(patterns.getContext());
 }
 
 void populateGPUDistributionLayoutAttrPatterns(Value laneId,
