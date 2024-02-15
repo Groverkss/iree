@@ -20,24 +20,6 @@ struct AMDGPUPrepareForChainedMatmulPass
     registry.insert<vector::VectorDialect>();
   }
 
-  /// A chained matmul is one where the result of the first matmul
-  /// is used as the first operand of another matmul (
-  /// first matmul lies in the backward slice of the
-  /// LHS of the second matmul).
-  bool
-  isChainedMatmul(SmallVector<vector::ContractionOp> &chainedMatmuls) const {
-    SetVector<Operation *> backwardSlice;
-    getBackwardSlice(chainedMatmuls[1].getLhs(), &backwardSlice);
-    for (auto *sliceOp : backwardSlice) {
-      auto candidateContract = dyn_cast<vector::ContractionOp>(sliceOp);
-      if (!candidateContract)
-        continue;
-      if (candidateContract == chainedMatmuls[0])
-        return true;
-    }
-    return false;
-  }
-
   /// Given a vector contract of the form
   /// %output = vector.contract %lhs, %rhs, %acc
   /// this function swaps the operands (%rhs, %lhs),
@@ -63,7 +45,7 @@ struct AMDGPUPrepareForChainedMatmulPass
     Value newResult = swappedOp.getResult();
     transposed = rewriter.create<vector::TransposeOp>(
         contractOp.getLoc(), newResult, SmallVector<int64_t>{1, 0});
-    rewriter.replaceAllUsesWith(contractOp.getResult(), transposed);
+    rewriter.replaceOp(contractOp, transposed);
   }
 
   /// The only compatible indexing map corresponds to
@@ -71,8 +53,13 @@ struct AMDGPUPrepareForChainedMatmulPass
   /// (m, n, k) -> (m, k)
   /// (m, n, k) -> (n, k)
   /// (m, n, k) -> (m, n)
+  ///
+  /// We only check for matmul_transpose_b because transposing the inputs of
+  /// the matmul for it still produces a matmul_transpose_b, which is good
+  /// for reads. We could probably do this for other matmuls also, but
+  /// we need to think if we want to enable that.
   bool isCompatibleIndexingMap(vector::ContractionOp contractOp,
-                               MLIRContext *ctx) {
+                               MLIRContext *ctx) const {
     AffineExpr m, n, k;
     bindDims(ctx, m, n, k);
     using MapList = ArrayRef<ArrayRef<AffineExpr>>;
@@ -81,22 +68,45 @@ struct AMDGPUPrepareForChainedMatmulPass
     return newIndexingMaps == contractOp.getIndexingMapsArray();
   }
 
+  /// Returns the first matmul in a matmul chain.
+  ///
+  /// A chained matmul is one where the lhs of the candidate matrix
+  /// is a result of another matmul (a matmul lies in the backward slice of lhs
+  /// of the first matmul).
+  FailureOr<vector::ContractionOp>
+  getChainParent(vector::ContractionOp candidate) const {
+    SetVector<Operation *> backwardSlice;
+    getBackwardSlice(candidate.getLhs(), &backwardSlice);
+    for (Operation *sliceOp : backwardSlice) {
+      auto chainParent = dyn_cast<vector::ContractionOp>(sliceOp);
+      if (!chainParent) {
+        continue;
+      }
+
+      // Check if the chainParent is a compatible matmul.
+      if (isCompatibleIndexingMap(chainParent, candidate.getContext())) {
+        return chainParent;
+      }
+    }
+    return failure();
+  }
+
   void runOnOperation() override {
     auto funcOp = getOperation();
-    SmallVector<vector::ContractionOp> chainedMatmuls;
+    SmallVector<vector::ContractionOp> matmulCandidates;
     funcOp.walk([&](vector::ContractionOp contractOp) {
-      if (!isCompatibleIndexingMap(contractOp, funcOp.getContext()))
-        return WalkResult::advance();
-      chainedMatmuls.push_back(contractOp);
-      return WalkResult::advance();
+      matmulCandidates.push_back(contractOp);
     });
-    if (chainedMatmuls.size() != 2)
-      return;
-    if (!isChainedMatmul(chainedMatmuls))
-      return;
+
     IRRewriter rewriter(funcOp.getContext());
-    for (vector::ContractionOp op : chainedMatmuls) {
-      swapOperandsAndTranspose(rewriter, op);
+    for (auto candidate : matmulCandidates) {
+      FailureOr<vector::ContractionOp> maybeChainedParent =
+          getChainParent(candidate);
+      if (failed(maybeChainedParent)) {
+        continue;
+      }
+      auto chainParent = maybeChainedParent.value();
+      swapOperandsAndTranspose(rewriter, chainParent);
     }
   }
 };
