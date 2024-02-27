@@ -374,12 +374,24 @@ setConvolutionVectorDistributionConfig(mlir::FunctionOpInterface entryPoint,
     intrinsics.emplace_back(mSize, nSize, kSize, aType, bType, cType);
   }
 
-  // Note that the following heuristic seeds are just placeholder values.
-  // We need to clean it up and make it adjusting to different targets.
-  // See https://github.com/openxla/iree/issues/16341 for details.
-  GPUMMAHeuristicSeeds seeds{/*bestSubgroupCountPerWorkgroup=*/4,
-                             /*bestMNTileCountPerSubgroup=*/8,
-                             /*bestKTileCountPerSubgroup=*/2};
+  GPUMMAHeuristicSeeds seeds;
+
+  int64_t mnSize = problem.mSize * problem.nSize;
+  int64_t threshold = 163840;
+  // For matmuls with less M*N size, we want to distribute M*N more onto
+  // workgroups.
+  if (mnSize <= threshold) {
+    seeds = {/*bestSubgroupCountPerWorkgroup=*/4,
+             /*bestMNTileCountPerSubgroup=*/4,
+             /*bestKTileCountPerSubgroup=*/8};
+  } else {
+    // Note that the following heuristic seeds are just placeholder values.
+    // We need to clean it up and make it adjusting to different targets.
+    // See https://github.com/openxla/iree/issues/16341 for details.
+    seeds = {/*bestSubgroupCountPerWorkgroup=*/4,
+             /*bestMNTileCountPerSubgroup=*/8,
+             /*bestKTileCountPerSubgroup=*/2};
+  }
 
   // First try to find a schedule with an exactly matching intrinsic.
   std::optional<GPUMMASchedule> schedule =
@@ -508,8 +520,8 @@ setMatmulVectorDistributionConfig(mlir::FunctionOpInterface entryPoint,
   // workgroups.
   if (mnSize <= threshold) {
     seeds = {/*bestSubgroupCountPerWorkgroup=*/4,
-             /*bestMNTileCountPerSubgroup=*/1,
-             /*bestKTileCountPerSubgroup=*/2};
+             /*bestMNTileCountPerSubgroup=*/4,
+             /*bestKTileCountPerSubgroup=*/8};
   } else {
     // Note that the following heuristic seeds are just placeholder values.
     // We need to clean it up and make it adjusting to different targets.
