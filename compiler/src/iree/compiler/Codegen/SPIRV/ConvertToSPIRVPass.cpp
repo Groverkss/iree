@@ -514,10 +514,8 @@ void ConvertToSPIRVPass::runOnOperation() {
     useIndirectBindings = true;
   };
 
-  llvm::StringMap<IREE::HAL::ExecutableExportOp> exportOps =
-      getAllEntryPoints(moduleOp);
   for (auto funcOp : moduleOp.getOps<mlir::FunctionOpInterface>()) {
-    auto exportOp = exportOps.lookup(funcOp.getName());
+    auto exportOp = getEntryPoint(funcOp);
     if (!exportOp)
       continue;
     // TODO(ravishankarm): This needs to be removed after ConvertToGPU is
@@ -525,13 +523,13 @@ void ConvertToSPIRVPass::runOnOperation() {
     // `hal.executable.export` directly and not on the function.
     if (funcOp->hasAttr(spirv::getEntryPointABIAttrName()))
       continue;
-    SmallVector<int64_t> workgroupSize = getWorkgroupSize(exportOp);
+    SmallVector<int64_t> workgroupSize = getWorkgroupSize(exportOp.value());
     if (workgroupSize.empty()) {
-      exportOp.emitOpError(
+      exportOp->emitOpError(
           "expected workgroup_size attribute to be set for SPIR-V lowering");
       return signalPassFailure();
     }
-    std::optional<int64_t> subgroupSize = getSubgroupSize(exportOp);
+    std::optional<int64_t> subgroupSize = getSubgroupSize(exportOp.value());
     auto workgroupSize32 = llvm::map_to_vector(
         workgroupSize, [](int64_t v) { return static_cast<int32_t>(v); });
     std::optional<int> subgroupSize32;
@@ -539,7 +537,7 @@ void ConvertToSPIRVPass::runOnOperation() {
       subgroupSize32 = *subgroupSize;
 
     for (IREE::HAL::DescriptorSetLayoutAttr setLayout :
-         exportOp.getLayout().getSetLayouts()) {
+         exportOp->getLayout().getSetLayouts()) {
       bool isIndirect =
           setLayout.getFlags() == IREE::HAL::DescriptorSetLayoutFlags::Indirect;
       if (isIndirect != useIndirectBindings) {

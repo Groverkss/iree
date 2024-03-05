@@ -381,22 +381,22 @@ public:
           }
         }
 
-        // Try to get waves-per-eu from the export-specific translation info in
-        // cases where codegen decides to override the value.
-        // Otherwise, fallback to the default option.
+        // // Try to get waves-per-eu from the export-specific translation info in
+        // // cases where codegen decides to override the value.
+        // // Otherwise, fallback to the default option.
         int64_t wavesPerEu = 0;
-        IREE::Codegen::TranslationInfoAttr translationInfo =
-            getTranslationInfo(exportOp);
-        if (auto translationConfig = translationInfo.getConfiguration()) {
-          if (auto attr =
-                  translationConfig.getAs<IntegerAttr>("waves_per_eu")) {
-            wavesPerEu = attr.getValue().getSExtValue();
-          }
-        }
-        if (wavesPerEu == 0) {
-          if (auto attr = getConfigIntegerAttr(targetAttr, "waves_per_eu"))
-            wavesPerEu = attr->getValue().getSExtValue();
-        }
+        // IREE::Codegen::TranslationInfoAttr translationInfo =
+        //     getTranslationInfo(exportOp);
+        // if (auto translationConfig = translationInfo.getConfiguration()) {
+        //   if (auto attr =
+        //           translationConfig.getAs<IntegerAttr>("waves_per_eu")) {
+        //     wavesPerEu = attr.getValue().getSExtValue();
+        //   }
+        // }
+        // if (wavesPerEu == 0) {
+        //   if (auto attr = getConfigIntegerAttr(targetAttr, "waves_per_eu"))
+        //     wavesPerEu = attr->getValue().getSExtValue();
+        // }
 
         // For GPU kernels,
         // 1. Insert AMDGPU_KERNEL calling convention.
