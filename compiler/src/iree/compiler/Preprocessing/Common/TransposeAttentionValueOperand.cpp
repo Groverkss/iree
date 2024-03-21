@@ -44,9 +44,36 @@ void TransposeAttentionValueOperandPass::runOnOperation() {
   for (AttentionOp attnOp : attentionOps) {
     Location loc = attnOp.getLoc();
     Value valueOp = attnOp.getValue();
+
+    // Find the collapse_shape for the value op.
+    auto collapse = dyn_cast<tensor::CollapseShapeOp>(valueOp.getDefiningOp());
+    if (!collapse)
+      continue;
+
+    // [0, 1], [2], [3]
+    auto reassoc = collapse.getReassociationIndices();
+    if (reassoc.size() != 3)
+      continue;
+    if (reassoc[0].size() != 2)
+      continue;
+    if (reassoc[1].size() != 1)
+      continue;
+    if (reassoc[2].size() != 1)
+      continue;
+    if (reassoc[0][0] != 0)
+      continue;
+    if (reassoc[0][1] != 1)
+      continue;
+    if (reassoc[1][0] != 2)
+      continue;
+    if (reassoc[2][0] != 3)
+      continue;
+
     rewriter.setInsertionPoint(attnOp);
 
-    auto valueTensor = dyn_cast<RankedTensorType>(valueOp.getType());
+    Value preCollapse = collapse.getOperand();
+
+    auto valueTensor = dyn_cast<RankedTensorType>(preCollapse.getType());
     if (!valueTensor) {
       continue;
     }
@@ -69,14 +96,17 @@ void TransposeAttentionValueOperandPass::runOnOperation() {
     SmallVector<int64_t> permutation(rank);
     std::iota(permutation.begin(), permutation.end(), 0);
     std::swap(permutation[rank - 1], permutation[rank - 2]);
-    Value transposedV =
-        rewriter
-            .create<linalg::TransposeOp>(loc, valueOp, emptyTensor, permutation)
-            ->getResult(0);
+    Value transposedV = rewriter
+                            .create<linalg::TransposeOp>(
+                                loc, preCollapse, emptyTensor, permutation)
+                            ->getResult(0);
+
+    Value collapsedTransposedV = rewriter.create<tensor::CollapseShapeOp>(
+        loc, transposedV, collapse.getReassociationIndices());
 
     rewriter.replaceOpWithNewOp<AttentionOp>(
         attnOp, attnOp.getResultTypes(),
-        ValueRange({attnOp.getQuery(), attnOp.getKey(), transposedV,
+        ValueRange({attnOp.getQuery(), attnOp.getKey(), collapsedTransposedV,
                     attnOp.getScale()}),
         attnOp.getDpsInits(), /*transpose_v=*/true);
   }

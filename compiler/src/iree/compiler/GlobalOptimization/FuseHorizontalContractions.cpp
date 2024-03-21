@@ -72,7 +72,7 @@ static LogicalResult fuseGroup(RewriterBase &rewriter,
                                SmallVector<linalg::GenericOp> fusionGroup) {
   linalg::GenericOp base = fusionGroup[0];
   for (auto op : fusionGroup) {
-    if (base->isBeforeInBlock(op)) {
+    if (op->isBeforeInBlock(base)) {
       base = op;
     }
   }
