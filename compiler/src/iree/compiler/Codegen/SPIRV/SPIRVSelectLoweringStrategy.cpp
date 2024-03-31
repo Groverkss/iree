@@ -70,28 +70,16 @@ verifyLoweringConfiguration(FunctionOpInterface funcOp,
 }
 
 static LogicalResult
-verifyEntryPoint(FunctionOpInterface funcOp,
-                 IREE::Codegen::TranslationInfoAttr translationInfo,
-                 IREE::HAL::ExecutableExportOp exportOp) {
+verifyTranslationInfo(FunctionOpInterface funcOp,
+                      IREE::Codegen::TranslationInfoAttr translationInfo) {
   if (translationInfo.getDispatchLoweringPassPipeline() ==
       CodeGenPipeline::TransformDialectCodegen) {
     // Transform dialect encodes configuration into the schedule directly.
     return success();
   }
 
-  std::optional<mlir::ArrayAttr> workgroupSizeAttr =
-      exportOp.getWorkgroupSize();
-  if (!workgroupSizeAttr || workgroupSizeAttr->size() != 3) {
-    return funcOp.emitOpError(
-        "expected workgroup size to have three dimensions for SPIR-V "
-        "pipelines");
-  }
-
-  std::array<int64_t, 3> workgroupSizes;
-  for (auto [index, attr] : llvm::enumerate(workgroupSizeAttr.value())) {
-    workgroupSizes[index] = llvm::cast<IntegerAttr>(attr).getInt();
-  }
-
+  SmallVector<int64_t> workgroupSizes =
+      llvm::to_vector(translationInfo.getWorkgroupSize());
   switch (translationInfo.getDispatchLoweringPassPipeline()) {
   case CodeGenPipeline::SPIRVBaseVectorize:
     return verifyLoweringConfiguration(funcOp, translationInfo, workgroupSizes,
@@ -122,15 +110,8 @@ void SPIRVSelectLoweringStrategyPass::runOnOperation() {
     return;
   }
 
-  auto exportOp = getEntryPoint(funcOp);
-  if (!exportOp) {
-    funcOp.emitOpError(
-        "Currently selection only supported for entry point functions");
-    return signalPassFailure();
-  }
-
   // Verify the properties of each entry point based on the target pipeline.
-  if (failed(verifyEntryPoint(funcOp, translationInfo, exportOp.value()))) {
+  if (failed(verifyTranslationInfo(funcOp, translationInfo))) {
     return signalPassFailure();
   }
 }

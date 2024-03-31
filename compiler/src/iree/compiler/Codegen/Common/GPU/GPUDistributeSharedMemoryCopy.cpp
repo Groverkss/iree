@@ -366,14 +366,12 @@ unrollSharedMemoryLoops(mlir::FunctionOpInterface funcOp,
 }
 
 LogicalResult gpuDistributeSharedMemoryCopy(mlir::FunctionOpInterface funcOp) {
-  std::optional<IREE::HAL::ExecutableExportOp> exportOp = getEntryPoint(funcOp);
-  if (!exportOp) {
-    // We cannot do anything because we do not have the workgroup size
-    // information, but the pass did not fail.
-    return success();
+  auto maybeWorkgroupSize = getWorkgroupSize(funcOp);
+  if (!maybeWorkgroupSize) {
+    return funcOp.emitOpError("failed to distribute shared memory copy since "
+                              "workgroup size isnt set");
   }
-
-  auto workgroupSize = getWorkgroupSize(exportOp.value());
+  SmallVector<int64_t> workgroupSize = maybeWorkgroupSize.value();
   workgroupSize.resize(3, 1);
   MLIRContext *context = funcOp.getContext();
   SmallVector<linalg::GenericOp> copiesToWorkgroupMem;

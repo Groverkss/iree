@@ -1811,12 +1811,11 @@ LogicalResult initGPULaunchConfig(FunctionOpInterface funcOp) {
       // For scalar dispatch cases--using just one thread of one workgroup.
       auto isOne = [](Value value) { return matchPattern(value, m_One()); };
       if (llvm::all_of(retOp.getOperands(), isOne)) {
-        std::array<int64_t, 3> workgroupSize = {1, 1, 1};
-        if (failed(setDispatchConfig(funcOp, workgroupSize, std::nullopt)))
-          return failure();
+        SmallVector<int64_t, 3> workgroupSize = {1, 1, 1};
         auto translationInfo = IREE::Codegen::TranslationInfoAttr::get(
             funcOp.getContext(),
-            IREE::Codegen::DispatchLoweringPassPipeline::LLVMGPUBaseLowering);
+            IREE::Codegen::DispatchLoweringPassPipeline::LLVMGPUBaseLowering,
+            workgroupSize);
         if (failed(setTranslationInfo(funcOp, translationInfo))) {
           return failure();
         }

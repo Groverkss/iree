@@ -597,10 +597,11 @@ void addSPIRVSubgroupReducePassPipeline(OpPassManager &funcPassManager) {
   funcPassManager.addPass(createForOpCanonicalizationPass());
   funcPassManager.addPass(createCanonicalizerPass());
 
-  auto getWarpSize = [](mlir::FunctionOpInterface func) {
-    auto moduleOp = func->getParentOfType<ModuleOp>();
-    spirv::TargetEnvAttr target = getSPIRVTargetEnvAttr(moduleOp);
-    return target.getResourceLimits().getSubgroupSize();
+  auto getWarpSize = [](mlir::FunctionOpInterface func) -> int {
+    // TODO: This kind of call back function is a really really bad idea
+    // This should be easier to resolve than doing this.
+    std::optional<int64_t> subgroupSize = getSPIRVSubgroupSize(func);
+    return subgroupSize.value_or(32);
   };
 
   // Handle vector reduction operations specifically.
@@ -627,19 +628,24 @@ void addSPIRVTransformDialectPassPipeline(OpPassManager &funcPassManager,
 // Entry Point
 //===----------------------------------------------------------------------===//
 
-  void buildSPIRVCodegenConfigurationPassPipeline(
-    OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
+static void buildSPIRVCodegenConfigurationPassPipelineImpl(
+    FunctionLikeNest &funcPassManager) {
   funcPassManager.addPass(createGPUGeneralizeNamedOpsPass);
   addCommonTargetExecutablePreprocessingPasses(funcPassManager);
   funcPassManager.addPass(createSPIRVSelectLoweringStrategyPass);
 }
 
+void buildSPIRVCodegenConfigurationPassPipeline(
+    OpPassManager &variantPassManager) {
+  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
+  buildSPIRVCodegenConfigurationPassPipelineImpl(funcPassManager);
+}
+
 void buildSPIRVCodegenPassPipeline(OpPassManager &variantPassManager) {
   FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
   funcPassManager.addPass(createSPIRVLowerExecutableTargetPass);
-
   addMemRefLoweringPasses(funcPassManager);
+  variantPassManager.addPass(createReconcileTranslationInfoPass());
   addSPIRVLoweringPasses(variantPassManager.nest<ModuleOp>());
 
   LLVM_DEBUG({
@@ -686,9 +692,12 @@ void registerCodegenSPIRVPasses() {
 
   static PassPipelineRegistration<> SPIRVConfigPipeline(
       "iree-codegen-spirv-configuration-pipeline",
-      "Runs the pipeline for configuring the lowering from linalg to SPIR-V",
-      [](OpPassManager &variantPassManager) {
-        buildSPIRVCodegenConfigurationPassPipeline(variantPassManager);
+      "Runs the pipeline for configuring the lowering from linalg to SPIR-V on "
+      "all functions in a module",
+      [](OpPassManager &modulePassManager) {
+        FunctionLikeNest funcOpInterfacePassManager(modulePassManager);
+        buildSPIRVCodegenConfigurationPassPipelineImpl(
+            funcOpInterfacePassManager);
       });
 
   static PassPipelineRegistration<> LinalgSPIRVPipeline(

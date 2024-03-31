@@ -83,36 +83,6 @@ getSubgroupIdsAndCounts(mlir::OpBuilder &builder, mlir::Location loc,
   return procInfo;
 }
 
-std::optional<std::array<int64_t, 3>>
-getWorkgroupSize(mlir::FunctionOpInterface funcOp) {
-  std::array<int64_t, 3> workgroupSize;
-  std::optional<IREE::HAL::ExecutableExportOp> exportOp =
-      mlir::iree_compiler::getEntryPoint(funcOp);
-  if (!exportOp) {
-    return std::nullopt;
-  }
-  std::optional<mlir::ArrayAttr> workgroupSizeAttr =
-      exportOp->getWorkgroupSize();
-  assert(workgroupSizeAttr.has_value());
-  for (auto [index, attr] : llvm::enumerate(workgroupSizeAttr.value())) {
-    workgroupSize[index] =
-        llvm::cast<mlir::IntegerAttr>(attr).getValue().getZExtValue();
-  }
-  return workgroupSize;
-}
-
-std::optional<int64_t> getSubgroupSize(mlir::FunctionOpInterface funcOp) {
-  std::optional<IREE::HAL::ExecutableExportOp> exportOp =
-      mlir::iree_compiler::getEntryPoint(funcOp);
-  if (!exportOp) {
-    return std::nullopt;
-  }
-  if (IntegerAttr attr = exportOp->getSubgroupSizeAttr()) {
-    return attr.getValue().getSExtValue();
-  }
-  return std::nullopt;
-}
-
 //===----------------------------------------------------------------------===//
 // GPU vectorization
 //===----------------------------------------------------------------------===//

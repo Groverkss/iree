@@ -815,11 +815,12 @@ DiagnosedSilenceableFailure transform_dialect::IREEBufferizeOp::apply(
   //   3. Post-bufferization passes are fine.
   PassManager pm(getContext());
   addIREEPostBufferizationPasses(pm);
-  WalkResult res = state.getTopLevel()->walk([&](ModuleOp moduleOp) {
-    if (failed(pm.run(moduleOp))) {
+  state.getTopLevel()->dump();
+  WalkResult res = state.getTopLevel()->walk([&](FunctionOpInterface funcOp) {
+    if (failed(pm.run(funcOp))) {
       getOperation()->emitError()
-          << "failed to post-bufferization passes on module:\n"
-          << *(moduleOp.getOperation()) << "\nunder top-level:\n"
+          << "failed to post-bufferization passes on function:\n"
+          << *(funcOp.getOperation()) << "\nunder top-level:\n"
           << *state.getTopLevel();
       return WalkResult::interrupt();
     }

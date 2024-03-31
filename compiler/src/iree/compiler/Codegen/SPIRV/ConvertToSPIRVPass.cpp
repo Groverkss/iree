@@ -518,23 +518,25 @@ void ConvertToSPIRVPass::runOnOperation() {
     auto exportOp = getEntryPoint(funcOp);
     if (!exportOp)
       continue;
-    // TODO(ravishankarm): This needs to be removed after ConvertToGPU is
-    // deprecated. All passes must set the `workgroup_size` on the
-    // `hal.executable.export` directly and not on the function.
     if (funcOp->hasAttr(spirv::getEntryPointABIAttrName()))
       continue;
-    SmallVector<int64_t> workgroupSize = getWorkgroupSize(exportOp.value());
-    if (workgroupSize.empty()) {
+    std::optional<ArrayAttr> workgroupSize = exportOp->getWorkgroupSize();
+    if (!workgroupSize) {
       exportOp->emitOpError(
           "expected workgroup_size attribute to be set for SPIR-V lowering");
       return signalPassFailure();
     }
-    std::optional<int64_t> subgroupSize = getSubgroupSize(exportOp.value());
-    auto workgroupSize32 = llvm::map_to_vector(
-        workgroupSize, [](int64_t v) { return static_cast<int32_t>(v); });
+    auto workgroupSize32 =
+        llvm::map_to_vector(workgroupSize.value(), [](Attribute v) {
+          return static_cast<int32_t>(
+              cast<IntegerAttr>(v).getValue().getZExtValue());
+        });
+
+    std::optional<APInt> subgroupSize = exportOp->getSubgroupSize();
     std::optional<int> subgroupSize32;
-    if (subgroupSize)
-      subgroupSize32 = *subgroupSize;
+    if (subgroupSize && subgroupSize->isNonNegative()) {
+      subgroupSize32 = subgroupSize->getZExtValue();
+    }
 
     for (IREE::HAL::DescriptorSetLayoutAttr setLayout :
          exportOp->getLayout().getSetLayouts()) {

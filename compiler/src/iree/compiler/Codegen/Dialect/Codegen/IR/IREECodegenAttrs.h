@@ -44,17 +44,11 @@ IREE::Codegen::TranslationInfoAttr
 getTranslationInfo(mlir::FunctionOpInterface funcOp);
 
 /// Returns the workgroup size specified on the `exportOp`.
-SmallVector<int64_t> getWorkgroupSize(IREE::HAL::ExecutableExportOp exportOp);
+std::optional<SmallVector<int64_t>>
+getWorkgroupSize(mlir::FunctionOpInterface funcOp);
 
 /// Returns the subgroup size specified on the `exportOp`.
-std::optional<int64_t> getSubgroupSize(IREE::HAL::ExecutableExportOp exportOp);
-
-/// Sets and overwrites the dispatch workgroup/subgroup size for the given entry
-/// point function. Returns failure if the given entry point is not exported via
-/// hal.executable.export.
-LogicalResult setDispatchConfig(mlir::FunctionOpInterface entryPoint,
-                                ArrayRef<int64_t> workgroupSize,
-                                std::optional<int64_t> subgroupSize);
+std::optional<int64_t> getSubgroupSize(mlir::FunctionOpInterface funcOp);
 
 /// Sets and overwites the translate executable info for the given entry point.
 /// Returns failure if the given entry point is not exported via
@@ -62,6 +56,9 @@ LogicalResult setDispatchConfig(mlir::FunctionOpInterface entryPoint,
 LogicalResult
 setTranslationInfo(mlir::FunctionOpInterface entryPoint,
                    IREE::Codegen::TranslationInfoAttr translationInfo);
+
+/// Erases any translation info set on an operation.
+void eraseTranslationInfo(mlir::FunctionOpInterface funcOp);
 
 //===----------------------------------------------------------------------===//
 // Helpers for getting/setting `iree_codegen.lowering_config` attribute on root
@@ -117,19 +114,9 @@ inline LogicalResult setOpConfigAndEntryPointFnTranslation(
   auto config = IREE::Codegen::LoweringConfigAttr::get(context, tileSizes,
                                                        scalableTileFlags);
   setLoweringConfig(op, config);
-  if (!workgroupSize.empty() || subgroupSize) {
-    // Add the dispatch config only when workgroup size and subgroup size are
-    // specified. This allows for cases where there is no entry point specified
-    // to pass through without failing.
-    // TODO: Really need to think about where this is set. This is not the
-    // best place cause it assumes we have a single function which is the
-    // entry point.
-    if (failed(setDispatchConfig(entryPointFn, workgroupSize, subgroupSize))) {
-      return failure();
-    }
-  }
   auto translationInfo = IREE::Codegen::TranslationInfoAttr::get(
-      entryPointFn.getContext(), passPipeline, SymbolRefAttr(), pipelineConfig);
+      entryPointFn.getContext(), passPipeline, SymbolRefAttr(), workgroupSize,
+      subgroupSize, pipelineConfig);
   return setTranslationInfo(entryPointFn, translationInfo);
 }
 
@@ -146,6 +133,9 @@ inline LogicalResult setOpConfigAndEntryPointFnTranslation(
                                                passPipeline, workgroupSize,
                                                subgroupSize, pipelineConfig);
 }
+
+/// Function to erase lowering configs that are set on an operation.
+void eraseLoweringConfig(Operation *op);
 
 //===----------------------------------------------------------------------===//
 // Helpers for getting/setting `iree_codegen.compilation_info` attribute on root

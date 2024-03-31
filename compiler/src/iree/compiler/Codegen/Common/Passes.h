@@ -221,7 +221,7 @@ std::unique_ptr<InterfacePass<FunctionOpInterface>>
 createMemrefCopyToLinalgPass();
 
 /// Extracts lowering configs and translation info from user configs.
-std::unique_ptr<OperationPass<IREE::HAL::ExecutableVariantOp>>
+std::unique_ptr<InterfacePass<FunctionOpInterface>>
 createMaterializeUserConfigsPass();
 
 /// Pass to optimize vector transfer_read and transfer_write.
@@ -234,6 +234,11 @@ std::unique_ptr<InterfacePass<FunctionOpInterface>> createPadDynamicAlloc();
 
 /// Pass to convert math operations to their polynomial approximation.
 std::unique_ptr<OperationPass<>> createPolynomialApproximationPass();
+
+/// Pass to reconcile TranslationInfo across multiple functions in a dispatch
+/// and set the appropriate values on the surrounding HAL ops.
+std::unique_ptr<OperationPass<IREE::HAL::ExecutableVariantOp>>
+createReconcileTranslationInfoPass();
 
 /// Pass to fuse parallel linalg operations.
 std::unique_ptr<InterfacePass<FunctionOpInterface>>

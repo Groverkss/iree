@@ -58,11 +58,10 @@ UnitAttr getIndirectBindingsAttr(Operation *op) {
 }
 
 std::optional<int> getSPIRVSubgroupSize(mlir::FunctionOpInterface funcOp) {
-  auto exportOp = getEntryPoint(funcOp);
-  if (!exportOp)
-    return std::nullopt;
-  if (auto size = exportOp->getSubgroupSize())
-    return size->getSExtValue();
+  std::optional<int64_t> subgroupSize = getSubgroupSize(funcOp);
+  if (subgroupSize) {
+    return subgroupSize.value();
+  }
 
   spirv::TargetEnvAttr target = getSPIRVTargetEnvAttr(funcOp);
   if (!target)

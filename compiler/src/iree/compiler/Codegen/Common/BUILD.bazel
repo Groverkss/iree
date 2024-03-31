@@ -110,6 +110,7 @@ iree_compiler_cc_library(
         "Passes.cpp",
         "PassUtils.cpp",
         "PolynomialApproximationPass.cpp",
+        "ReconcileTranslationInfo.cpp",
         "RematerializeParallelOps.cpp",
         "RemoveTrivialLoops.cpp",
         "ReplaceSlowMinMaxOps.cpp",

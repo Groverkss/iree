@@ -170,6 +170,15 @@ def DecomposeSoftmax :
   ];
 }
 
+def ReconcileTranslationInfo
+    : Pass<"iree-codegen-reconcile-translation-info", "IREE::HAL::ExecutableVariantOp"> {
+  let summary =
+      "Reconcile information (like workgroup_size, subgroup_size) across "
+      "`TranslationInfo` set on each function in the dispatch and merge them"
+      "and set them at the appropriate places in the surrounding HAL ops";
+  let constructor = "mlir::iree_compiler::createReconcileTranslationInfoPass()";
+}
+
 def ReplaceSlowMinMaxOps
     : InterfacePass<"iree-codegen-replace-slow-min-max-ops", "mlir::FunctionOpInterface"> {
   let summary =
@@ -370,7 +379,7 @@ def MaterializeEncodingIntoNop :
 }
 
 def MaterializeUserConfigs :
-    Pass<"iree-codegen-materialize-user-configs", "IREE::HAL::ExecutableVariantOp"> {
+    InterfacePass<"iree-codegen-materialize-user-configs", "mlir::FunctionOpInterface"> {
   let summary = "Sets the lowering configs and translation info from user configs";
   let constructor = "mlir::iree_compiler::createMaterializeUserConfigsPass()";
   let dependentDialects = [

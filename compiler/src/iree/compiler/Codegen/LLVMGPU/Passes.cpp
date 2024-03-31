@@ -611,12 +611,12 @@ void addGPUWarpReductionPassPipeline(OpPassManager &funcPassManager) {
   funcPassManager.addPass(createCanonicalizerPass());
 
   auto getSubgroupSizeFn = [](mlir::FunctionOpInterface func) -> int {
-    std::optional<int64_t> maybeSubgroupSize;
-    if (std::optional<IREE::HAL::ExecutableExportOp> exportOp =
-            getEntryPoint(func)) {
-      maybeSubgroupSize = getSubgroupSize(exportOp.value());
+    // TODO: This kind of call back function is a really really bad idea
+    // This should be easier to resolve than doing this.
+    if (std::optional<int64_t> maybeSubgroupSize = getSubgroupSize(func)) {
+      return maybeSubgroupSize.value();
     }
-    return maybeSubgroupSize.value_or(kDefaultSubgroupSize);
+    return kDefaultSubgroupSize;
   };
 
   // vector -> simt gpu + vector
@@ -840,6 +840,7 @@ void buildLLVMGPUCodegenPassPipeline(OpPassManager &variantPassManager,
   OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
   FunctionLikeNest(modulePassManager)
       .addPass(createLLVMGPULowerExecutableTargetPass);
+  variantPassManager.addPass(createReconcileTranslationInfoPass());
   //===--------------------------------------------------------------------===//
   // Convert Linalg ops to LLVM+NVVM/ROCDL ops.
   //
@@ -872,6 +873,7 @@ void buildROCDLCodegenPassPipeline(OpPassManager &variantPassManager) {
   OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
   FunctionLikeNest(modulePassManager)
       .addPass(createROCDLLowerExecutableTargetPass);
+  variantPassManager.addPass(createReconcileTranslationInfoPass());
   addLowerToLLVMGPUPasses(modulePassManager, /*forROCDL=*/true);
 
   LLVM_DEBUG({

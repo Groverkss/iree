@@ -137,6 +137,8 @@ createGPUVectorAlloc();
 // `getWarpSize` is for deciding the warp size to use; it takes the
 // current function containing those vector ops as the argument.
 // If nullptr, warp size 32 will be used.
+// TODO: This kind of call back function is a really really bad idea
+// This should be easier to resolve than doing this.
 std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
 createConvertVectorReductionToGPUPass(
     bool expandSubgroupReduction = true,
