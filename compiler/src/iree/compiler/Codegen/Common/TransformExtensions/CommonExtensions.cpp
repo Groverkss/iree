@@ -781,15 +781,10 @@ DiagnosedSilenceableFailure transform_dialect::IREEBufferizeOp::apply(
     config.listener = &listener;
     // Manually gather list of ops because the other GreedyPatternRewriteDriver
     // overloads only accepts ops that are isolated from above.
-    SmallVector<Operation *> ops;
-    state.getTopLevel()->walk([&](Operation *nestedOp) {
-      if (state.getTopLevel() != nestedOp)
-        ops.push_back(nestedOp);
-    });
     LogicalResult result =
-        applyOpPatternsAndFold(ops, std::move(patterns), config);
+        applyOpPatternsAndFold(target, std::move(patterns), config);
     if (failed(result)) {
-      return mlir::emitDefiniteFailure(state.getTopLevel(),
+      return mlir::emitDefiniteFailure(target,
                                        "greedy pattern application failed");
     }
     if (listener.failed())
@@ -802,9 +797,8 @@ DiagnosedSilenceableFailure transform_dialect::IREEBufferizeOp::apply(
   options.memCpyFn = memCpyFn;
   options.testAnalysisOnly = getTestAnalysisOnly();
   options.printConflicts = getPrintConflicts();
-  if (failed(runIREEOneShotBufferize(state.getTopLevel(), options)))
-    return mlir::emitDefiniteFailure(state.getTopLevel(),
-                                     "bufferization failed");
+  if (failed(runIREEOneShotBufferize(target, options)))
+    return mlir::emitDefiniteFailure(target, "bufferization failed");
 
   // Early exit if test_analysis_only is set.
   if (getTestAnalysisOnly()) {
@@ -815,22 +809,12 @@ DiagnosedSilenceableFailure transform_dialect::IREEBufferizeOp::apply(
   //   3. Post-bufferization passes are fine.
   PassManager pm(getContext());
   addIREEPostBufferizationPasses(pm);
-  state.getTopLevel()->dump();
-  WalkResult res = state.getTopLevel()->walk([&](FunctionOpInterface funcOp) {
-    if (failed(pm.run(funcOp))) {
-      getOperation()->emitError()
-          << "failed to post-bufferization passes on function:\n"
-          << *(funcOp.getOperation()) << "\nunder top-level:\n"
-          << *state.getTopLevel();
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (res.wasInterrupted())
+  if (failed(pm.run(target))) {
     return mlir::emitDefiniteFailure(target)
            << "post-bufferization passes failed";
+  }
 
-  results.set(getOperation()->getOpResult(0), {*payload.begin()});
+  results.set(getOperation()->getOpResult(0), {target});
   return listener.checkAndResetError();
 }
 
