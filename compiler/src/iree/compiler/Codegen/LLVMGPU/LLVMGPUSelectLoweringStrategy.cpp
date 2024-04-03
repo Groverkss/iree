@@ -80,19 +80,15 @@ verifyLoweringConfiguration(FunctionOpInterface funcOp,
 
 static LogicalResult
 verifyEntryPoint(FunctionOpInterface funcOp,
-                 IREE::Codegen::TranslationInfoAttr translationInfo,
-                 IREE::HAL::ExecutableExportOp exportOp) {
-  std::optional<mlir::ArrayAttr> workgroupSizeAttr =
-      exportOp.getWorkgroupSize();
-
-  if (workgroupSizeAttr.has_value()) {
-    std::array<int64_t, 3> workgroupSizes;
-    for (auto [index, attr] : llvm::enumerate(workgroupSizeAttr.value())) {
-      workgroupSizes[index] = llvm::cast<IntegerAttr>(attr).getInt();
-    }
-    return verifyLoweringConfiguration(funcOp, translationInfo, workgroupSizes,
-                                       verifyGPUMatmulPipeline);
+                 IREE::Codegen::TranslationInfoAttr translationInfo) {
+  std::optional<SmallVector<int64_t>> workgroupSize = getWorkgroupSize(funcOp);
+  if (!workgroupSize) {
+    return funcOp->emitOpError(
+        "failed to get workgroup size needed for verification");
   }
+
+  return verifyLoweringConfiguration(
+      funcOp, translationInfo, workgroupSize.value(), verifyGPUMatmulPipeline);
   return success();
 }
 
@@ -111,11 +107,8 @@ void LLVMGPUSelectLoweringStrategyPass::runOnOperation() {
   }
 
   // Verify the properties of each entry point based on the target pipeline.
-  auto exportOp = getEntryPoint(funcOp);
-  if (exportOp) {
-    if (failed(verifyEntryPoint(funcOp, translationInfo, exportOp.value()))) {
-      return signalPassFailure();
-    }
+  if (failed(verifyEntryPoint(funcOp, translationInfo))) {
+    return signalPassFailure();
   }
 }
 

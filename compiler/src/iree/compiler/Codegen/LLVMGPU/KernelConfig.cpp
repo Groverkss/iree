@@ -158,8 +158,7 @@ getTensorCoreConfig(SmallVectorImpl<TileWorkgroupSizePair> &tileSizes,
 
 // Get the target arch associated with the immediate parent.
 static StringRef getTargetArch(mlir::FunctionOpInterface entryPoint) {
-  auto targetAttr = IREE::HAL::ExecutableTargetAttr::lookup(entryPoint);
-  if (!targetAttr) {
+  if (auto targetAttr = IREE::HAL::ExecutableTargetAttr::lookup(entryPoint)) {
     if (auto config = targetAttr.getConfiguration()) {
       if (auto attr = config.getAs<StringAttr>("target_arch")) {
         return attr.getValue();
