@@ -1,4 +1,4 @@
-// RUN: iree-opt %s --pass-pipeline='builtin.module(hal.executable(hal.executable.variant(iree-transform-dialect-interpreter)))' \
+// RUN: iree-opt %s --pass-pipeline='builtin.module(hal.executable(hal.executable.variant(builtin.module(func.func(iree-transform-dialect-interpreter)))))' \
 // RUN:   --iree-codegen-transform-dialect-library=%p/attention_transform_spec.mlir| \
 // RUN: FileCheck --check-prefix=CHECK %s
 
