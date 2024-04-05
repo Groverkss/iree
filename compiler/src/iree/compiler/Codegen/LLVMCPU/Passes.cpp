@@ -387,8 +387,7 @@ void addMultiTilingExpertPassPipeline(OpPassManager &funcPassManager,
   }
 
   if (pipelineOpt.enableAArch64SSVE) {
-    nestedModulePM.addNestedPass<func::FuncOp>(
-        createLLVMCPU2DScalableTo1DScalablePass());
+    funcPassManager.addPass(createLLVMCPU2DScalableTo1DScalablePass());
   }
 
   {
@@ -530,10 +529,8 @@ void addMmt4dTilingExpertPassPipeline(OpPassManager &funcPassManager,
     options.enableVectorMasking = pipelineOpt.enableVectorMasking;
     options.vectorizePadding = true;
     options.vectorizeGatherAccesses = true;
-    funcPassManager.addPass(
-        createGenericVectorizationPass(options));
-    funcPassManager.addPass(
-        createOptimizeTensorInsertExtractSlicesPass());
+    funcPassManager.addPass(createGenericVectorizationPass(options));
+    funcPassManager.addPass(createOptimizeTensorInsertExtractSlicesPass());
     funcPassManager.addPass(createCanonicalizerPass());
     funcPassManager.addPass(createCSEPass());
   }
@@ -673,19 +670,19 @@ static void addLowerToLLVMPasses(OpPassManager &modulePassManager,
 
   if (enableAArch64SME) {
     FunctionLikeNest(modulePassManager)
-      .addPass(mlir::arm_sme::createVectorLegalizationPass)
-      .addPass(createCanonicalizerPass)
-      .addPass(createCSEPass)
-      .addPass(mlir::createArithToArmSMEConversionPass)
-      .addPass(mlir::createConvertVectorToArmSMEPass)
-      .addPass(mlir::arm_sme::createTileAllocationPass)
-      .addPass([]() {
-	return mlir::arm_sme::createEnableArmStreamingPass(
-            mlir::arm_sme::ArmStreamingMode::StreamingLocally,
-            mlir::arm_sme::ArmZaMode::NewZA,
-            /*onlyIfRequiredByOps=*/true);
-      })
-      .addPass(mlir::createConvertArmSMEToSCFPass);
+        .addPass(mlir::arm_sme::createVectorLegalizationPass)
+        .addPass(createCanonicalizerPass)
+        .addPass(createCSEPass)
+        .addPass(mlir::createArithToArmSMEConversionPass)
+        .addPass(mlir::createConvertVectorToArmSMEPass)
+        .addPass(mlir::arm_sme::createTileAllocationPass)
+        .addPass([]() {
+          return mlir::arm_sme::createEnableArmStreamingPass(
+              mlir::arm_sme::ArmStreamingMode::StreamingLocally,
+              mlir::arm_sme::ArmZaMode::NewZA,
+              /*onlyIfRequiredByOps=*/true);
+        })
+        .addPass(mlir::createConvertArmSMEToSCFPass);
   }
 
   FunctionLikeNest(modulePassManager)

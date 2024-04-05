@@ -146,11 +146,10 @@ static LogicalResult gpuCopyFn(OpBuilder &builder, Location loc, Value from,
 // Returns success when workgroup reordering is supported for `funcOp`.
 // On ROCm, we require workgroup counts to be static.
 static LogicalResult canReorderWorkgroups(FunctionOpInterface funcOp) {
-  auto variantOp = getExecutableVariantOp(funcOp);
-  if (failed(variantOp))
+  auto target = IREE::HAL::ExecutableTargetAttr::lookup(funcOp);
+  if (!target) {
     return failure();
-
-  IREE::HAL::ExecutableTargetAttr target = variantOp->getTarget();
+  }
   if (target.getBackend() != "rocm")
     return success();
 
@@ -276,9 +275,9 @@ void addGPUMatmulSimtPassPipeline(OpPassManager &funcPassManager) {
   funcPassManager.addPass(createCSEPass());
 
   funcPassManager.addPass(createGPUReduceSharedMemoryBankConflicts());
-  funcPassManager.addPass(createReorderWorkgroups(clReorderWorkgroupsStrategy, clReorderWorkgroupsLogSwizzleTile,
-						  canReorderWorkgroups))
-  funcPassManager.addPass(createWorkGroupSwizzle(logSwizzleTile));
+  funcPassManager.addPass(createReorderWorkgroups(
+      clReorderWorkgroupsStrategy, clReorderWorkgroupsLogSwizzleTile,
+      canReorderWorkgroups));
   funcPassManager.addPass(createCanonicalizerPass());
   funcPassManager.addPass(createCSEPass());
 
@@ -318,8 +317,7 @@ void addGPUMatmulTensorCorePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(createCSEPass());
 
   funcPassManager.addPass(createRemoveSingleIterationLoopPass());
-  funcPassManager.addPass(createWorkGroupSwizzle(logSwizzleTile));
-  funcPassManager(createReorderWorkgroups(
+  funcPassManager.addPass(createReorderWorkgroups(
       clReorderWorkgroupsStrategy, clReorderWorkgroupsLogSwizzleTile,
       canReorderWorkgroups));
   funcPassManager.addPass(createCanonicalizerPass());
