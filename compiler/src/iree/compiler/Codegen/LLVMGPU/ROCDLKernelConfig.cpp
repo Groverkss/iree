@@ -371,7 +371,6 @@ LogicalResult initROCDLLaunchConfig(FunctionOpInterface funcOp) {
       }
     }
   }
-  return success();
 
   Operation *rootOp = nullptr;
 
