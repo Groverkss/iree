@@ -97,9 +97,12 @@ buildVectorVMVXTransformPassPipeline(OpPassManager &variantPassManager) {
       // Flatten and cleanup memrefs.
       .addPass(memref::createFoldMemRefAliasOpsPass)
       .addPass(createCanonicalizerPass)
-      .addPass(createCSEPass)
-      .addPass(createFlattenMemRefSubspanPass)
-      .addPass(memref::createNormalizeMemRefsPass)
+      .addPass(createCSEPass);
+
+  modulePassManager.addPass(createFlattenMemRefSubspanPass());
+  modulePassManager.addPass(memref::createNormalizeMemRefsPass());
+
+  FunctionLikeNest(modulePassManager)
       .addPass(affine::createAffineScalarReplacementPass)
       .addPass(createCanonicalizerPass)
       .addPass(createCSEPass);

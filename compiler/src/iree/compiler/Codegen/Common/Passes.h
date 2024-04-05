@@ -134,8 +134,7 @@ std::unique_ptr<Pass> createExtractAddressComputationGPUPass();
 /// Flattens n-D MemRef subspan ops to 1-D MemRef and folds the byte offsets
 /// on subspan ops to the consumer load/store ops, in preparation for lowering
 /// to backends that require linearized access.
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
-createFlattenMemRefSubspanPass();
+std::unique_ptr<OperationPass<ModuleOp>> createFlattenMemRefSubspanPass();
 
 /// Creates a pass to fold `affine.min` ops in tiled and distributed loops.
 std::unique_ptr<InterfacePass<FunctionOpInterface>>

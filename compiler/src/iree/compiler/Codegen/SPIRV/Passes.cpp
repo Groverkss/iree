@@ -169,7 +169,9 @@ static void addLoopMaterializationPasses(OpPassManager &funcPassManager) {
 /// MemRef into 1-D ones, vectorizes load/store when possible, and performs
 /// cross loop nest optimizations. This should be invoked after structured op
 /// lowering and before final SPIR-V conversion.
-static void addMemRefLoweringPasses(FunctionLikeNest &funcPassManager) {
+static void addMemRefLoweringPasses(OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
+
   funcPassManager.addPass(createCanonicalizerPass)
       .addPass(createCSEPass)
       .addPass(createConvertComplexToStandardPass)
@@ -223,11 +225,13 @@ static void addMemRefLoweringPasses(FunctionLikeNest &funcPassManager) {
       .addPass([&]() {
         return createOptimizeVectorTransferPass(
             /*flatten=*/false, /*dropUnitDims=*/false);
-      })
+      });
 
-      // Turn multi-dimension memref into one-dimension. This is needed for
-      // SPIR-V because we don't use upstream memref descriptors.
-      .addPass(createFlattenMemRefSubspanPass)
+  // Turn multi-dimension memref into one-dimension. This is needed for
+  // SPIR-V because we don't use upstream memref descriptors.
+  modulePassManager.addPass(createFlattenMemRefSubspanPass());
+
+  FunctionLikeNest(modulePassManager)
       .addPass(createSPIRVEraseStorageBufferStaticShapePass);
 }
 
@@ -253,8 +257,7 @@ static void addSPIRVLoweringPasses(OpPassManager &modulePassManager) {
       .addPass(createCanonicalizerPass)
       .addPass(createCSEPass);
 
-  modulePassManager.addPass(
-      createConvertToSPIRVPass(clSPIRVIndexingBits));
+  modulePassManager.addPass(createConvertToSPIRVPass(clSPIRVIndexingBits));
 
   auto getTargetEnv = [](spirv::ModuleOp moduleOp) {
     return getSPIRVTargetEnvAttr(moduleOp);
@@ -642,9 +645,10 @@ void buildSPIRVCodegenConfigurationPassPipeline(
 }
 
 void buildSPIRVCodegenPassPipeline(OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
+  OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createSPIRVLowerExecutableTargetPass);
-  addMemRefLoweringPasses(funcPassManager);
+  addMemRefLoweringPasses(modulePassManager);
   variantPassManager.addPass(createReconcileTranslationInfoPass());
   addSPIRVLoweringPasses(variantPassManager.nest<ModuleOp>());
 

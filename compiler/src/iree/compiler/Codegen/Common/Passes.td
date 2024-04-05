@@ -243,8 +243,7 @@ def ExtractAddressComputation: Pass<"extract-address-computation"> {
   ];
 }
 
-def FlattenMemRefSubspan :
-  InterfacePass<"iree-codegen-flatten-memref-subspan", "mlir::FunctionOpInterface"> {
+def FlattenMemRefSubspan : Pass<"iree-codegen-flatten-memref-subspan", "ModuleOp"> {
   let summary =
       "Flatten n-D MemRef subspan ops to 1-D ones and fold byte offsets";
   let constructor = "mlir::iree_compiler::createFlattenMemRefSubspanPass()";
