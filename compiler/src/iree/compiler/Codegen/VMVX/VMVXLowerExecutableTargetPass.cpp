@@ -12,12 +12,15 @@
 #include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
 #include "iree/compiler/Dialect/HAL/IR/HALOps.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtDialect.h"
+#include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+
+#define DEBUG_TYPE "iree-vmvx-lower-executable-target"
 
 using mlir::iree_compiler::IREE::Codegen::LoweringConfigAttr;
 
@@ -77,6 +80,10 @@ void VMVXLowerExecutableTargetPass::runOnOperation() {
     return signalPassFailure();
   }
 
+  LLVM_DEBUG({
+    llvm::dbgs() << "Using Pass pipeline : ";
+    pipeline.dump();
+  });
   if (failed(runPipeline(pipeline, funcOp))) {
     return signalPassFailure();
   }
