@@ -16,11 +16,12 @@
 namespace mlir::iree_compiler {
 
 /// Pass manager nesting for `FunctionOpInterface` ops.
-using FunctionLikeNest = MultiOpNest<func::FuncOp, IREE::Util::InitializerOp, IREE::Util::FuncOp>;
+using FunctionLikeNest = MultiOpNest<func::FuncOp>;
 
 /// Helper method to get a pass manager nested at `FunctionOpInterface`.
-std::optional<OpPassManager> getFunctionOpInterfacePassManager(FunctionOpInterface funcOp);
+std::optional<OpPassManager>
+getFunctionOpInterfacePassManager(FunctionOpInterface funcOp);
 
-}
+} // namespace mlir::iree_compiler
 
 #endif // IREE_COMPILER_CODEGEN_COMMON_PASSUTILS_H_

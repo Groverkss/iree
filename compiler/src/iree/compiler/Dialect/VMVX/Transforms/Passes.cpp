@@ -28,9 +28,6 @@
 
 namespace mlir::iree_compiler::IREE::VMVX {
 
-using FunctionLikeNest =
-    MultiOpNest<func::FuncOp, IREE::Util::InitializerOp, IREE::Util::FuncOp>;
-
 // ---------------------------------------------------------------------------
 // Variant configuration
 // ---------------------------------------------------------------------------
@@ -127,9 +124,8 @@ void buildVMVXTransformPassPipeline(OpPassManager &variantPassManager) {
   // ---------------------------------------------------------------------------
 
   OpPassManager &modulePassManager = variantPassManager.nest<mlir::ModuleOp>();
-  modulePassManager.addNestedPass<mlir::ModuleOp>(
-      createMaterializeConstantsPass());
-  modulePassManager.addNestedPass<mlir::ModuleOp>(createConversionPass());
+  modulePassManager.addPass(createMaterializeConstantsPass());
+  modulePassManager.addPass(createConversionPass());
 
   FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createCanonicalizerPass).addPass(createCSEPass);

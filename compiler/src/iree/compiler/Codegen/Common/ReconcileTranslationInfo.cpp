@@ -90,10 +90,11 @@ void ReconcileTranslationInfoPass::runOnOperation() {
   SmallVector<IREE::Codegen::TranslationInfoAttr> translationInfos;
   innerModuleOp->walk([&](FunctionOpInterface funcOp) {
     auto translationInfo = getTranslationInfo(funcOp);
-    if (translationInfo) {
-      translationInfos.push_back(translationInfo);
+    if (!translationInfo) {
+      return;
     }
 
+    translationInfos.push_back(translationInfo);
     // The following is moving the waves-per-eu specification from
     // translation info into the func-like op. This is not the best
     // place to do this, but the intent is after this pass all the

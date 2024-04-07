@@ -154,6 +154,13 @@ void LLVMCPULowerExecutableTargetPass::runOnOperation() {
     addCPUDataTilingPipeline(pipeline, tilingConfig, pipelineOpts);
     break;
   }
+  case IREE::Codegen::DispatchLoweringPassPipeline::
+      CPULinalgExtTileAndVectorize: {
+    TilingConfig tilingConfig = getTilingConfigForPipeline(funcOp);
+    addCPULinalgExtTileAndVectorizePipeline(pipeline, tilingConfig,
+                                            pipelineOpts);
+    break;
+  }
   // Transform-dialect pipelines.
   case IREE::Codegen::DispatchLoweringPassPipeline::TransformDialectCodegen: {
     SymbolRefAttr codegenSpec = translationInfo.getCodegenSpec();
