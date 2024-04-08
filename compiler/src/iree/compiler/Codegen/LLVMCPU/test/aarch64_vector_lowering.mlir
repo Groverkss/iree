@@ -1,4 +1,4 @@
-// RUN: iree-opt %s --pass-pipeline="builtin.module(func.func(iree-llvmcpu-mmt4d-vector-lowering),iree-codegen-llvmcpu-vector-lowering-pipeline)" --split-input-file | FileCheck %s
+// RUN: iree-opt %s --pass-pipeline="builtin.module(func.func(iree-llvmcpu-mmt4d-vector-lowering, iree-codegen-llvmcpu-vector-lowering-pipeline))" --split-input-file | FileCheck %s
 // RUN: iree-opt %s --pass-pipeline="builtin.module(func.func(iree-llvmcpu-mmt4d-vector-lowering{vector-contract-custom-kernels=false}))" --split-input-file | FileCheck %s -check-prefix=CHECK-KERNEL-OFF
 // RUN: iree-opt %s --pass-pipeline="builtin.module(func.func(iree-llvmcpu-mmt4d-vector-lowering{vector-contract-custom-kernels=true}))" --split-input-file | FileCheck %s -check-prefix=CHECK-KERNEL-ON
 
