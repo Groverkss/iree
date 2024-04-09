@@ -820,21 +820,24 @@ void addGPUTransformDialectPasses(OpPassManager &funcPassManager,
 //===----------------------------------------------------------------------===//
 
 static void buildLLVMGPUCodegenConfigurationPassPipelineImpl(
-    FunctionLikeNest &funcPassManager) {
+    OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createGPUGeneralizeNamedOpsPass);
   addCommonTargetExecutablePreprocessingPasses(funcPassManager);
-  funcPassManager.addPass(createLLVMGPUSelectLoweringStrategyPass);
+
+  modulePassManager.addPass(createLLVMGPUSelectLoweringStrategyPass());
 }
 
 void buildLLVMGPUCodegenConfigurationPassPipeline(
     OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
-  buildLLVMGPUCodegenConfigurationPassPipelineImpl(funcPassManager);
+  buildLLVMGPUCodegenConfigurationPassPipelineImpl(
+      variantPassManager.nest<ModuleOp>());
 }
 
 void buildLLVMGPUCodegenPassPipeline(OpPassManager &variantPassManager,
                                      bool useROCM) {
   OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  modulePassManager.addPass(createLowerExecutableUsingTransformDialectPass());
   FunctionLikeNest(modulePassManager)
       .addPass(createLLVMGPULowerExecutableTargetPass);
   variantPassManager.addPass(createReconcileTranslationInfoPass());
@@ -859,20 +862,23 @@ void buildLLVMGPUCodegenPassPipeline(OpPassManager &variantPassManager,
 //===----------------------------------------------------------------------===//
 
 static void buildROCDLCodegenConfigurationPassPipelineImpl(
-    FunctionLikeNest &funcPassManager) {
+    OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createGPUGeneralizeNamedOpsPass);
   addCommonTargetExecutablePreprocessingPasses(funcPassManager);
-  funcPassManager.addPass(createROCDLSelectLoweringStrategyPass);
+
+  modulePassManager.addPass(createROCDLSelectLoweringStrategyPass());
 }
 
 void buildROCDLCodegenConfigurationPassPipeline(
     OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
-  buildROCDLCodegenConfigurationPassPipelineImpl(funcPassManager);
+  OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  buildROCDLCodegenConfigurationPassPipelineImpl(modulePassManager);
 }
 
 void buildROCDLCodegenPassPipeline(OpPassManager &variantPassManager) {
   OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  modulePassManager.addPass(createLowerExecutableUsingTransformDialectPass());
   FunctionLikeNest(modulePassManager)
       .addPass(createROCDLLowerExecutableTargetPass);
   variantPassManager.addPass(createReconcileTranslationInfoPass());
@@ -903,9 +909,7 @@ void registerCodegenLLVMGPUPasses() {
       "Runs the translation strategy configuration pipeline on Linalg for GPU "
       "on all functions in a module",
       [](OpPassManager &modulePassManager) {
-        FunctionLikeNest funcOpInterfacePassManager(modulePassManager);
-        buildLLVMGPUCodegenConfigurationPassPipelineImpl(
-            funcOpInterfacePassManager);
+        buildLLVMGPUCodegenConfigurationPassPipelineImpl(modulePassManager);
       });
 
   static PassPipelineRegistration<> LinalgNVVMPipeline(
@@ -940,9 +944,7 @@ void registerCodegenROCDLPasses() {
       "iree-codegen-rocdl-configuration-pipeline",
       "Runs pass pipeline to select a suitable lowering strategy for ROCDL",
       [](OpPassManager &modulePassManager) {
-        FunctionLikeNest funcOpInterfacePassManager(modulePassManager);
-        buildROCDLCodegenConfigurationPassPipelineImpl(
-            funcOpInterfacePassManager);
+        buildROCDLCodegenConfigurationPassPipelineImpl(modulePassManager);
       });
 
   static PassPipelineRegistration<> LinalgROCDLPipeline(

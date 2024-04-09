@@ -1,4 +1,4 @@
-// RUN: iree-opt %s --iree-transform-dialect-interpreter \
+// RUN: iree-opt %s --pass-pipeline='builtin.module(iree-transform-dialect-interpreter)' \
 // RUN:   --iree-codegen-transform-dialect-library=%p/attention_transform_spec.mlir| \
 // RUN: FileCheck --check-prefix=CHECK %s
 
@@ -29,7 +29,9 @@ module {
 // CHECK-DAG:  #[[MAP5:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
 // CHECK-DAG:  #[[MAP6:.+]] = affine_map<(d0, d1, d2) -> (d0, d1)>
 // CHECK-DAG:  #[[MAP7:.+]] = affine_map<(d0, d1) -> (d1, d0)>
-// CHECK:      func.func @_attention_dispatch_0() {
+// CHECK-DAG:  #[[TRANSLATION:.+]] = #iree_codegen.translation_info<None workgroup_size = [4, 8, 4] subgroup_size = 32>
+// CHECK:      func.func @_attention_dispatch_0()
+// CHECK-SAME:     translation_info = #[[TRANSLATION]]
 // CHECK-DAG:    %[[CST:.+]] = arith.constant dense<0.000000e+00> : vector<32x64xf32>
 // CHECK-DAG:    %[[CST_0:.+]] = arith.constant dense<-1.000000e+30> : vector<32xf32>
 // CHECK-DAG:    %[[CST_1:.+]] = arith.constant dense<0.000000e+00> : vector<32xf32>

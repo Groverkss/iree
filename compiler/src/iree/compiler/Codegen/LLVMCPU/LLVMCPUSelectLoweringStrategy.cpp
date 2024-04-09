@@ -79,39 +79,41 @@ verifyLoweringConfiguration(FunctionOpInterface funcOp,
 }
 
 void LLVMCPUSelectLoweringStrategyPass::runOnOperation() {
-  auto funcOp = getOperation();
+  auto moduleOp = getOperation();
+  for (auto funcOp : moduleOp.getOps<FunctionOpInterface>()) {
+    // Set the strategy with default heuristics.
+    if (failed(initCPULaunchConfig(funcOp))) {
+      funcOp.emitOpError("failed to set lowering configuration");
+      return signalPassFailure();
+    }
 
-  // Set the strategy with default heuristics.
-  if (failed(initCPULaunchConfig(funcOp))) {
-    return signalPassFailure();
-  }
+    auto translationInfo = getTranslationInfo(funcOp);
+    if (!translationInfo) {
+      continue;
+    }
 
-  auto translationInfo = getTranslationInfo(funcOp);
-  if (!translationInfo) {
-    return;
-  }
-
-  // Verify the configuration.
-  LogicalResult verificationStatus = success();
-  switch (translationInfo.getDispatchLoweringPassPipeline()) {
-  case IREE::Codegen::DispatchLoweringPassPipeline::CPUDoubleTilingExpert:
-    verificationStatus = verifyLoweringConfiguration(
-        funcOp, translationInfo, verifyDoubleTilingExpertPassPipelineConfig);
-    break;
-  case IREE::Codegen::DispatchLoweringPassPipeline::
-      CPUConvTileAndDecomposeExpert:
-    verificationStatus = verifyLoweringConfiguration(
-        funcOp, translationInfo, verifyConvTileAndDecomposeExpertConfig);
-    break;
-  default:
-    break;
-  }
-  if (failed(verificationStatus)) {
-    return signalPassFailure();
+    // Verify the configuration.
+    LogicalResult verificationStatus = success();
+    switch (translationInfo.getDispatchLoweringPassPipeline()) {
+    case IREE::Codegen::DispatchLoweringPassPipeline::CPUDoubleTilingExpert:
+      verificationStatus = verifyLoweringConfiguration(
+          funcOp, translationInfo, verifyDoubleTilingExpertPassPipelineConfig);
+      break;
+    case IREE::Codegen::DispatchLoweringPassPipeline::
+        CPUConvTileAndDecomposeExpert:
+      verificationStatus = verifyLoweringConfiguration(
+          funcOp, translationInfo, verifyConvTileAndDecomposeExpertConfig);
+      break;
+    default:
+      break;
+    }
+    if (failed(verificationStatus)) {
+      return signalPassFailure();
+    }
   }
 }
 
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createLLVMCPUSelectLoweringStrategyPass() {
   return std::make_unique<LLVMCPUSelectLoweringStrategyPass>();
 }

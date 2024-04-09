@@ -93,26 +93,27 @@ verifyEntryPoint(FunctionOpInterface funcOp,
 }
 
 void LLVMGPUSelectLoweringStrategyPass::runOnOperation() {
-  auto funcOp = getOperation();
+  auto moduleOp = getOperation();
+  for (auto funcOp : moduleOp.getOps<FunctionOpInterface>()) {
+    if (failed(initGPULaunchConfig(funcOp))) {
+      return signalPassFailure();
+    }
 
-  if (failed(initGPULaunchConfig(funcOp))) {
-    return signalPassFailure();
-  }
+    IREE::Codegen::TranslationInfoAttr translationInfo =
+        getTranslationInfo(funcOp);
+    if (!translationInfo) {
+      // Dont do anything if translation info is not set.
+      return;
+    }
 
-  IREE::Codegen::TranslationInfoAttr translationInfo =
-      getTranslationInfo(funcOp);
-  if (!translationInfo) {
-    // Dont do anything if translation info is not set.
-    return;
-  }
-
-  // Verify the properties of each entry point based on the target pipeline.
-  if (failed(verifyEntryPoint(funcOp, translationInfo))) {
-    return signalPassFailure();
+    // Verify the properties of each entry point based on the target pipeline.
+    if (failed(verifyEntryPoint(funcOp, translationInfo))) {
+      return signalPassFailure();
+    }
   }
 }
 
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createLLVMGPUSelectLoweringStrategyPass() {
   return std::make_unique<LLVMGPUSelectLoweringStrategyPass>();
 }

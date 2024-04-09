@@ -99,24 +99,26 @@ verifyTranslationInfo(FunctionOpInterface funcOp,
 }
 
 void SPIRVSelectLoweringStrategyPass::runOnOperation() {
-  auto funcOp = getOperation();
+  auto moduleOp = getOperation();
+  for (auto funcOp : moduleOp.getOps<FunctionOpInterface>()) {
+    if (failed(initSPIRVLaunchConfig(funcOp))) {
+      funcOp.emitOpError("failed to set lowering configuration");
+      return signalPassFailure();
+    }
 
-  if (failed(initSPIRVLaunchConfig(funcOp))) {
-    return signalPassFailure();
-  }
+    auto translationInfo = getTranslationInfo(funcOp);
+    if (!translationInfo) {
+      continue;
+    }
 
-  auto translationInfo = getTranslationInfo(funcOp);
-  if (!translationInfo) {
-    return;
-  }
-
-  // Verify the properties of each entry point based on the target pipeline.
-  if (failed(verifyTranslationInfo(funcOp, translationInfo))) {
-    return signalPassFailure();
+    // Verify the properties of each entry point based on the target pipeline.
+    if (failed(verifyTranslationInfo(funcOp, translationInfo))) {
+      return signalPassFailure();
+    }
   }
 }
 
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createSPIRVSelectLoweringStrategyPass() {
   return std::make_unique<SPIRVSelectLoweringStrategyPass>();
 }

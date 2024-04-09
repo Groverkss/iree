@@ -686,7 +686,7 @@ Value mlir::iree_compiler::gpu::buildBufferize(ImplicitLocOpBuilder &b,
   b.create<IREE::transform_dialect::ApplyLoopIndependentCodeMotionOp>(funcH);
   b.create<mlir::transform::ApplyCommonSubexpressionEliminationOp>(funcH);
   b.create<IREEEliminateEmptyTensorsOp>(variantH);
-  auto bufferizeOp = b.create<IREEBufferizeOp>(variantH, /*targetGpu=*/true);
+  auto bufferizeOp = b.create<IREEBufferizeOp>(funcH, /*targetGpu=*/true);
   bufferizeOp.setTargetGpu(true);
   variantH = bufferizeOp.getResult();
   Value memrefFunc =

@@ -30,17 +30,18 @@ public:
   }
 
   void runOnOperation() override {
-    auto funcOp = getOperation();
-
-    if (failed(initROCDLLaunchConfig(funcOp))) {
-      funcOp.emitOpError("failed to set configuration");
-      return signalPassFailure();
+    auto moduleOp = getOperation();
+    for (auto funcOp : moduleOp.getOps<FunctionOpInterface>()) {
+      if (failed(initROCDLLaunchConfig(funcOp))) {
+        funcOp.emitOpError("failed to set configuration");
+        return signalPassFailure();
+      }
     }
   }
 };
 } // namespace
 
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createROCDLSelectLoweringStrategyPass() {
   return std::make_unique<ROCDLSelectLoweringStrategyPass>();
 }

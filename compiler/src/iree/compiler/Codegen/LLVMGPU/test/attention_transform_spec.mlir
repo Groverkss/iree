@@ -9,7 +9,7 @@ module attributes { transform.with_named_sequence } {
     %tiled_attention, %forall_grid =
     transform.structured.tile_using_forall %attention tile_sizes [1, 128]
       ( mapping = [#gpu.block<x>, #gpu.block<y>] ) : (!transform.any_op) -> (!transform.any_op, !transform.any_op)
-    transform.iree.populate_workgroup_count_region_using_num_threads_slice %forall_grid : (!transform.any_op) -> ()
+    // transform.iree.populate_workgroup_count_region_using_num_threads_slice %forall_grid : (!transform.any_op) -> ()
 
     // Tile batch dimensions of attention
     // ==========================================
@@ -113,18 +113,17 @@ module attributes { transform.with_named_sequence } {
 
     // Bufferization
     // ==========================================
-    %func_4 = transform.structured.match ops{["func.func"]} in %variant_op : (!transform.any_op) -> !transform.any_op
-    transform.apply_patterns to %func_4 {
+    transform.apply_patterns to %func_3 {
       transform.apply_patterns.tensor.reassociative_reshape_folding
       transform.apply_patterns.canonicalization
       transform.apply_patterns.iree.fold_fill_into_pad
       transform.apply_patterns.linalg.tiling_canonicalization
       transform.apply_patterns.scf.for_loop_canonicalization
     } : !transform.any_op
-    transform.apply_cse to %func_4 : !transform.any_op
-    transform.iree.eliminate_empty_tensors %func_3 : (!transform.any_op) -> ()
-    transform.apply_patterns to %func_4 { transform.apply_patterns.linalg.erase_unnecessary_inputs } : !transform.any_op
-    %func_5 = transform.iree.bufferize { target_gpu } %func_4 : (!transform.any_op) -> (!transform.any_op)
+    transform.apply_cse to %func_3 : !transform.any_op
+    transform.iree.eliminate_empty_tensors %variant_op : (!transform.any_op) -> ()
+    transform.apply_patterns to %func_3 { transform.apply_patterns.linalg.erase_unnecessary_inputs } : !transform.any_op
+    %func_4 = transform.iree.bufferize { target_gpu } %func_3 : (!transform.any_op) -> (!transform.any_op)
 
     // Step 5. Pre-process the contract and transfer ops to put it in the right form.
     // ===========================================================================

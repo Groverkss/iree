@@ -97,7 +97,7 @@ def LLVMCPUPeel :
 }
 
 def LLVMCPUSelectLoweringStrategy :
-    InterfacePass<"iree-llvmcpu-select-lowering-strategy", "mlir::FunctionOpInterface"> {
+    Pass<"iree-llvmcpu-select-lowering-strategy", "ModuleOp"> {
   let summary =
       "Select a IREE::HAL::DispatchLoweringPassPipeline for lowering the variant";
   let constructor =

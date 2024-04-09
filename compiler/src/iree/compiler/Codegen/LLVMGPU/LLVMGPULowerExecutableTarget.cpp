@@ -137,13 +137,6 @@ void LLVMGPULowerExecutableTargetPass::runOnOperation() {
   case IREE::Codegen::DispatchLoweringPassPipeline::LLVMGPUPackUnPack:
     addGPUPackUnPackPasses(pipeline);
     break;
-  // Transform-dialect pipelines.
-  case IREE::Codegen::DispatchLoweringPassPipeline::TransformDialectCodegen: {
-    SymbolRefAttr codegenSpec = translationInfo.getCodegenSpec();
-    addGPUTransformDialectPasses(
-        pipeline, codegenSpec ? codegenSpec.getLeafReference() : StringRef(""));
-    break;
-  }
   // no pipeline specified, nothing to do.
   case IREE::Codegen::DispatchLoweringPassPipeline::None:
     return;

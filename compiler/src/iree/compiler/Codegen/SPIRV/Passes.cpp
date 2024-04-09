@@ -632,16 +632,18 @@ void addSPIRVTransformDialectPassPipeline(OpPassManager &funcPassManager,
 //===----------------------------------------------------------------------===//
 
 static void buildSPIRVCodegenConfigurationPassPipelineImpl(
-    FunctionLikeNest &funcPassManager) {
+    OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createGPUGeneralizeNamedOpsPass);
   addCommonTargetExecutablePreprocessingPasses(funcPassManager);
-  funcPassManager.addPass(createSPIRVSelectLoweringStrategyPass);
+
+  modulePassManager.addPass(createSPIRVSelectLoweringStrategyPass());
 }
 
 void buildSPIRVCodegenConfigurationPassPipeline(
     OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
-  buildSPIRVCodegenConfigurationPassPipelineImpl(funcPassManager);
+  OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  buildSPIRVCodegenConfigurationPassPipelineImpl(modulePassManager);
 }
 
 void buildSPIRVCodegenPassPipeline(OpPassManager &variantPassManager) {
@@ -699,9 +701,7 @@ void registerCodegenSPIRVPasses() {
       "Runs the pipeline for configuring the lowering from linalg to SPIR-V on "
       "all functions in a module",
       [](OpPassManager &modulePassManager) {
-        FunctionLikeNest funcOpInterfacePassManager(modulePassManager);
-        buildSPIRVCodegenConfigurationPassPipelineImpl(
-            funcOpInterfacePassManager);
+        buildSPIRVCodegenConfigurationPassPipelineImpl(modulePassManager);
       });
 
   static PassPipelineRegistration<> LinalgSPIRVPipeline(

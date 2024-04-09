@@ -79,7 +79,7 @@ def LLVMGPUPrefetchSharedMemory :
 }
 
 def LLVMGPUSelectLoweringStrategy :
-    InterfacePass<"iree-llvmgpu-select-lowering-strategy", "mlir::FunctionOpInterface"> {
+    Pass<"iree-llvmgpu-select-lowering-strategy", "ModuleOp"> {
   let summary = "Select a IREE::HAL::DispatchLoweringPassPipeline for lowering the target variant";
   let constructor = "mlir::iree_compiler::createLLVMGPUSelectLoweringStrategyPass()";
 }

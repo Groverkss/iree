@@ -94,6 +94,7 @@ iree_cc_library(
     "IREEComprehensiveBufferizePass.cpp"
     "IREEExpandStridedMetadata.cpp"
     "InstrumentMemoryAccesses.cpp"
+    "LowerExecutableUsingTransformDialect.cpp"
     "LowerUKernelsToCalls.cpp"
     "MaterializeEncodingIntoNop.cpp"
     "MaterializeEncodingIntoPackUnPack.cpp"

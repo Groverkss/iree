@@ -32,8 +32,9 @@ namespace mlir::iree_compiler::IREE::VMVX {
 // Variant configuration
 // ---------------------------------------------------------------------------
 
-void buildVMVXConfigurationPassPipeline(OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
+static void
+buildVMVXConfigurationPassPipelineImpl(OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
   // ---------------------------------------------------------------------------
   // Tensor-level optimization, kernel dispatch and lower to buffers.
   // ---------------------------------------------------------------------------
@@ -42,8 +43,13 @@ void buildVMVXConfigurationPassPipeline(OpPassManager &variantPassManager) {
       .addPass([&]() { return createCPUMaterializeEncodingPass(); })
       // TODO: Remove the following pass the plumb support for
       // #hal.descriptor_type memory space through the stack.
-      .addPass(createEraseHALDescriptorTypeFromMemRefPass)
-      .addPass(createVMVXSelectLoweringStrategyPass);
+      .addPass(createEraseHALDescriptorTypeFromMemRefPass);
+  modulePassManager.addPass(createVMVXSelectLoweringStrategyPass());
+}
+
+void buildVMVXConfigurationPassPipeline(OpPassManager &variantPassManager) {
+  OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  buildVMVXConfigurationPassPipelineImpl(modulePassManager);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +156,8 @@ void registerVMVXPasses() {
   static PassPipelineRegistration<> configurationPassPipeline(
       "iree-vmvx-configuration-pipeline",
       "Runs the full IREE VMVX dialect configuration pipeline",
-      [](OpPassManager &variantPassManager) {
-        buildVMVXConfigurationPassPipeline(variantPassManager);
+      [](OpPassManager &modulePassManager) {
+        buildVMVXConfigurationPassPipeline(modulePassManager);
       });
 
   static PassPipelineRegistration<> transformPassPipeline(

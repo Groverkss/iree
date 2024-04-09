@@ -541,7 +541,8 @@ void addMmt4dTilingExpertPassPipeline(OpPassManager &funcPassManager,
   addCPUBufferizePasses(funcPassManager);
 
   // Vector lowering of Mmt4d.
-  funcPassManager.addPass(createLLVMCPUMmt4dVectorLoweringPass(clEnableVectorContractCustomKernels));
+  funcPassManager.addPass(createLLVMCPUMmt4dVectorLoweringPass(
+      clEnableVectorContractCustomKernels));
 
   // Generic vector lowering.
   LLVMCPUVectorLoweringPassOptions options;
@@ -729,9 +730,9 @@ static void addLowerToLLVMPasses(OpPassManager &modulePassManager,
       createAddFastMathFlagsPass());
 }
 
-void buildLLVMCPUCodegenConfigurationPassPipeline(
-    OpPassManager &variantPassManager) {
-  FunctionLikeNest funcPassManager(variantPassManager.nest<ModuleOp>());
+void buildLLVMCPUCodegenConfigurationPassPipelineImpl(
+    OpPassManager &modulePassManager) {
+  FunctionLikeNest funcPassManager(modulePassManager);
   addCommonTargetExecutablePreprocessingPasses(funcPassManager,
                                                clUseSoftmaxInterFusion);
   funcPassManager
@@ -742,8 +743,15 @@ void buildLLVMCPUCodegenConfigurationPassPipeline(
       .addPass([&]() { return createCPUMaterializeEncodingPass(); })
       // TODO: Remove the following pass the plumb support for
       // #hal.descriptor_type memory space through the stack.
-      .addPass(createEraseHALDescriptorTypeFromMemRefPass)
-      .addPass(createLLVMCPUSelectLoweringStrategyPass);
+      .addPass(createEraseHALDescriptorTypeFromMemRefPass);
+
+  modulePassManager.addPass(createLLVMCPUSelectLoweringStrategyPass());
+}
+
+void buildLLVMCPUCodegenConfigurationPassPipeline(
+    OpPassManager &variantPassManager) {
+  OpPassManager &modulePassManager = variantPassManager.nest<ModuleOp>();
+  buildLLVMCPUCodegenConfigurationPassPipelineImpl(modulePassManager);
 }
 
 void buildLLVMCPUCodegenPassPipeline(OpPassManager &variantPassManager,
@@ -800,8 +808,8 @@ void registerCodegenLLVMCPUPasses() {
   static PassPipelineRegistration<> LLVMCPUConfigPipeline(
       "iree-codegen-llvmcpu-configuration-pipeline",
       "Runs the translation strategy configuration pipeline on Linalg for CPU",
-      [](OpPassManager &variantPassManager) {
-        buildLLVMCPUCodegenConfigurationPassPipeline(variantPassManager);
+      [](OpPassManager &modulePassManager) {
+        buildLLVMCPUCodegenConfigurationPassPipeline(modulePassManager);
       });
 
   static PassPipelineRegistration<> LLVMCPUBufferizationPipeline(

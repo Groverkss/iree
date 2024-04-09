@@ -1,5 +1,5 @@
 // RUN: iree-opt --split-input-file \
-// RUN:  --pass-pipeline="builtin.module(hal.executable(hal.executable.variant(builtin.module(func.func(iree-llvmgpu-select-lowering-strategy, iree-llvmgpu-lower-executable-target)))))" \
+// RUN:  --pass-pipeline="builtin.module(hal.executable(hal.executable.variant(builtin.module(iree-llvmgpu-select-lowering-strategy, func.func(iree-llvmgpu-lower-executable-target)))))" \
 // RUN:  %s | FileCheck %s
 
 hal.executable @group_reduction_1d {

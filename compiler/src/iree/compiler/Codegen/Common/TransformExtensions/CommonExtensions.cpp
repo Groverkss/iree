@@ -393,8 +393,7 @@ transform_dialect::ShareForallOperandsOp::applyToOne(
 //===---------------------------------------------------------------------===//
 
 LogicalResult rewriteForallToWorkgroup(RewriterBase &rewriter,
-                                       scf::ForallOp forallOp,
-                                       IREE::HAL::ExecutableExportOp exportOp) {
+                                       scf::ForallOp forallOp) {
   // Step 0. Target-specific verifications. There is no good place to anchor
   // those right now: the ForallOp is target-independent and the
   // transform op does not apply to individual ForallOp.
@@ -496,23 +495,6 @@ DiagnosedSilenceableFailure transform_dialect::ForallToWorkgroupOp::applyToOne(
     transform::TransformRewriter &rewriter, mlir::FunctionOpInterface target,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
-  if (!isa<HAL::ExecutableOp, HAL::ExecutableVariantOp>(state.getTopLevel())) {
-    return mlir::emitDefiniteFailure(
-        state.getTopLevel(),
-        "requires HAL::ExecutableOp or HAL::ExecutableVariantOp toplevel "
-        "to attach the workgroup size information to a nested "
-        "ExecutableExportOp");
-  }
-
-  IREE::HAL::ExecutableExportOp exportOp;
-  state.getTopLevel()->walk([&](IREE::HAL::ExecutableExportOp op) {
-    if (op.getSymName() == target.getName())
-      exportOp = op;
-  });
-  if (!exportOp) {
-    return mlir::emitSilenceableFailure(
-        target, "no IREE::HAL::ExecutableExportOp found");
-  }
 
   scf::ForallOp topLevelForallOp;
   auto walkResult = target->walk([&](scf::ForallOp forallOp) {
@@ -530,7 +512,7 @@ DiagnosedSilenceableFailure transform_dialect::ForallToWorkgroupOp::applyToOne(
   }
 
   rewriter.setInsertionPoint(topLevelForallOp);
-  if (failed(rewriteForallToWorkgroup(rewriter, topLevelForallOp, exportOp)))
+  if (failed(rewriteForallToWorkgroup(rewriter, topLevelForallOp)))
     return mlir::emitDefiniteFailure(target, "rewriteForallToWorkgroup failed");
 
   return DiagnosedSilenceableFailure::success();

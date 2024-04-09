@@ -365,6 +365,12 @@ def InstrumentMemoryAccesses :
   let constructor = "mlir::iree_compiler::createInstrumentMemoryAccessesPass()";
 }
 
+def LowerExecutableUsingTransformDialect :
+    Pass<"iree-codegen-lower-executable-using-transform-dialect", "ModuleOp"> {
+  let summary = "Lower executables using the transform dialect recipe provided in the module.";
+  let constructor = "mlir::iree_compiler::createLowerExecutableUsingTransformDialectPass()";
+}
+
 def LowerUKernelOpsToCalls :
     Pass<"iree-codegen-lower-ukernel-ops-to-calls", "ModuleOp"> {
   let summary = "Lower micro-kernel wrapper ops into function calls";

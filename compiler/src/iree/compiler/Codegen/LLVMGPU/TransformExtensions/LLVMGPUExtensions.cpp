@@ -10,6 +10,7 @@
 #include "iree/compiler/Codegen/Common/GPU/GPUPatterns.h"
 #include "iree/compiler/Codegen/Common/GPU/GPUVectorDistribution.h"
 #include "iree/compiler/Codegen/Common/GPU/Passes.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUInterfaces.h"
 #include "iree/compiler/Codegen/LLVMGPU/Utils/LLVMGPUUtils.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
@@ -83,14 +84,6 @@ transform_dialect::MapNestedForallToGpuThreadsOp::applyToOne(
     transform::TransformRewriter &rewriter, mlir::FunctionOpInterface target,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
-  std::optional<IREE::HAL::ExecutableExportOp> maybeExportOp =
-      getEntryPoint(target);
-  if (!maybeExportOp) {
-    state.getTopLevel()->emitOpError("no IREE::HAL::ExecutableExportOp found");
-    return emitDefaultDefiniteFailure(target);
-  }
-  IREE::HAL::ExecutableExportOp exportOp = *maybeExportOp;
-
   auto transformOp = cast<transform::TransformOpInterface>(getOperation());
 
   rewriter.setInsertionPointToStart(&target.getFunctionBody().front());
@@ -100,12 +93,15 @@ transform_dialect::MapNestedForallToGpuThreadsOp::applyToOne(
           getSyncAfterDistribution());
   if (!diag.succeeded())
     return diag;
-  auto newAttr = rewriter.getIndexArrayAttr(getWorkgroupDims());
-  auto subgroupSizeAttr = rewriter.getIndexAttr(getSubgroupSize());
-  rewriter.startOpModification(exportOp);
-  exportOp->setAttr(exportOp.getWorkgroupSizeAttrName(), newAttr);
-  exportOp->setAttr(exportOp.getSubgroupSizeAttrName(), subgroupSizeAttr);
-  rewriter.finalizeOpModification(exportOp);
+  if (failed(setTranslationInfo(
+          target, IREE::Codegen::TranslationInfoAttr::get(
+                      rewriter.getContext(),
+                      IREE::Codegen::DispatchLoweringPassPipeline::None,
+                      getWorkgroupDims(), getSubgroupSize())))) {
+    target->emitOpError("failed to update translation info");
+    return emitDefaultDefiniteFailure(target);
+  }
+
   return DiagnosedSilenceableFailure::success();
 }
 
@@ -278,32 +274,12 @@ transform_dialect::VectorToWarpExecuteOnLane0Op::applyToOne(
     transform::TransformRewriter &rewriter, scf::IfOp target,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
-  if (!isa<HAL::ExecutableOp, HAL::ExecutableVariantOp>(state.getTopLevel())) {
-    results.assign(1, nullptr);
-    return emitDefaultSilenceableFailure(state.getTopLevel())
-           << "requires HAL::ExecutableOp or "
-              "HAL::ExecutableVariantOp toplevel "
-              "so that IR is properly isolated. This is required so "
-              "we can "
-              "safely inspect the HAL::ExecutableExportOp under "
-              "multi-threaded "
-              "pass assumptions.";
-  }
-
   auto funcOp = target->getParentOfType<mlir::FunctionOpInterface>();
-  std::optional<HAL::ExecutableExportOp> exportOp = getEntryPoint(funcOp);
-  if (!exportOp) {
-    // Return a silenceable failure and set the expected 1 result to
-    // nullptr.
-    results.assign(1, nullptr);
-    return emitDefaultSilenceableFailure(target)
-           << "export op is missing --- the transform is not "
-              "applied";
-  }
 
-  std::optional<ArrayAttr> maybeAttr = exportOp->getWorkgroupSize();
+  std::optional<SmallVector<int64_t>> maybeWorkgroupSize =
+      getWorkgroupSize(funcOp);
   // TODO: Pervasive 3 constant in IREE.
-  if (!maybeAttr || maybeAttr->size() != 3) {
+  if (!maybeWorkgroupSize || maybeWorkgroupSize->empty()) {
     // Return a silenceable failure and set the expected 1 result to
     // nullptr.
     results.assign(1, nullptr);
@@ -313,7 +289,7 @@ transform_dialect::VectorToWarpExecuteOnLane0Op::applyToOne(
               "--- the transform is not applied";
   }
 
-  int64_t workgroupSizeX = llvm::cast<IntegerAttr>((*maybeAttr)[0]).getInt();
+  int64_t workgroupSizeX = (*maybeWorkgroupSize)[0];
   int64_t warpSize = getWarpSize();
   if (workgroupSizeX % warpSize != 0) {
     // Return a silenceable failure and set the expected 1 result to
@@ -583,18 +559,10 @@ transform_dialect::VectorWarpDistributionOp::applyToOne(
     transform::TransformRewriter &rewriter, mlir::FunctionOpInterface target,
     transform::ApplyToEachResultList &results,
     transform::TransformState &state) {
-  std::optional<IREE::HAL::ExecutableExportOp> maybeExportOp =
-      getEntryPoint(target);
-  if (!maybeExportOp) {
-    state.getTopLevel()->emitOpError("no IREE::HAL::ExecutableExportOp found");
-    return emitDefaultDefiniteFailure(target);
-  }
-  IREE::HAL::ExecutableExportOp exportOp = *maybeExportOp;
-
-  std::optional<llvm::APInt> subgroupSize = exportOp.getSubgroupSize();
+  auto subgroupSize = getSubgroupSize(target);
   if (!subgroupSize) {
-    state.getTopLevel()->emitOpError(
-        "could not extract subgroup size from IREE::HAL::ExecutableExportOp");
+    target->emitOpError(
+        "could not extract subgroup size from IREE::Codegen::TranslationInfo");
     return emitDefaultDefiniteFailure(target);
   }
 
@@ -627,9 +595,9 @@ transform_dialect::VectorWarpDistributionOp::applyToOne(
   RewritePatternSet patterns(ctx);
   populateVectorTransferWriteDistribution(target, patterns,
                                           /*benefit=*/2);
+  unsigned subgroupSizeU = static_cast<unsigned>(subgroupSize.value());
   populatePropagateVectorDistribution(target, patterns,
-                                      /*benefit=*/1,
-                                      subgroupSize->getSExtValue());
+                                      /*benefit=*/1, subgroupSizeU);
   if (failed(
           applyPatternsAndFoldGreedily(target, std::move(patterns), config))) {
     return mlir::emitDefiniteFailure(
@@ -874,23 +842,8 @@ static bool isParallelRegionBoundary(Operation *op) {
   if (op->hasAttr("__parallel_region_boundary_for_test"))
     return true;
 
-  // We consider functions inside executable variants that have the same symbol
-  // name as an export symbol.
-  auto func = dyn_cast<FunctionOpInterface>(op);
-  if (!func)
-    return false;
-  auto parent = op->getParentOfType<ModuleOp>();
-  if (!parent)
-    return false;
-  auto variant = parent->getParentOfType<HAL::ExecutableVariantOp>();
-  if (!variant)
-    return false;
-  WalkResult result = variant.walk([&](HAL::ExecutableExportOp exportOp) {
-    if (exportOp.getSymNameAttr() == func.getNameAttr())
-      return WalkResult::interrupt();
-    return WalkResult::skip();
-  });
-  return result.wasInterrupted();
+  // We consider functions inside executable variants .
+  return isa<FunctionOpInterface>(op);
 }
 
 /// Returns `true` if the op behaves like a sequential loop, e.g., the control

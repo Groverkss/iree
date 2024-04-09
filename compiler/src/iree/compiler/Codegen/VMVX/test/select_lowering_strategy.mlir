@@ -1,4 +1,4 @@
-// RUN: iree-opt -pass-pipeline='builtin.module(func.func(iree-vmvx-select-lowering-strategy))' -split-input-file %s | FileCheck %s
+// RUN: iree-opt -pass-pipeline='builtin.module(iree-vmvx-select-lowering-strategy)' -split-input-file %s | FileCheck %s
 
 #executable_target_vmvx_bytecode_fb = #hal.executable.target<"vmvx", "vmvx-bytecode-fb">
 module {

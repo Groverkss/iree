@@ -116,7 +116,7 @@ createSPIRVInitialVectorLoweringPass();
 std::unique_ptr<OperationPass<ModuleOp>> createSPIRVLinkExecutablesPass();
 
 /// Pass to set the lowering strategy for the target variant.
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createSPIRVSelectLoweringStrategyPass();
 
 /// Main pass to lower executables to scalar + vector code on SPIR-V path.

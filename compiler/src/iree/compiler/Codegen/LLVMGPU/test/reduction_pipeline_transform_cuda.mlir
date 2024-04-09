@@ -1,25 +1,31 @@
-// RUN: iree-opt --split-input-file --pass-pipeline="builtin.module(func.func(iree-llvmgpu-select-lowering-strategy, iree-llvmgpu-lower-executable-target))" %s | FileCheck %s
+// RUN: iree-opt --split-input-file --pass-pipeline="builtin.module(hal.executable(hal.executable.variant(builtin.module(iree-llvmgpu-select-lowering-strategy, iree-codegen-lower-executable-using-transform-dialect, func.func(iree-llvmgpu-lower-executable-target)))))" %s | FileCheck %s
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1) -> (d0, d1)>
-#map1 = affine_map<(d0, d1) -> (d0)>
-module {
-  func.func @small_reduction() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<1024x13xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<1024xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [1024, 13], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<1024x13xf32>> -> tensor<1024x13xf32>
-    %3 = tensor.empty() : tensor<1024xf32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<1024xf32>) -> tensor<1024xf32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<1024x13xf32>) outs(%4 : tensor<1024xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %6 = arith.addf %in, %out : f32
-      linalg.yield %6 : f32
-    } -> tensor<1024xf32>
-    flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [1024], strides = [1] : tensor<1024xf32> -> !flow.dispatch.tensor<writeonly:tensor<1024xf32>>
-    return
+hal.executable @small_reduction {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @small_reduction ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2
+    hal.return %x, %y, %z : index, index, index
   }
+  builtin.module {
+    func.func @small_reduction() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<1024x13xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<1024xf32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [1024, 13], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<1024x13xf32>> -> tensor<1024x13xf32>
+      %3 = tensor.empty() : tensor<1024xf32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<1024xf32>) -> tensor<1024xf32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<1024x13xf32>) outs(%4 : tensor<1024xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %6 = arith.addf %in, %out : f32
+        linalg.yield %6 : f32
+      } -> tensor<1024xf32>
+      flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [1024], strides = [1] : tensor<1024xf32> -> !flow.dispatch.tensor<writeonly:tensor<1024xf32>>
+      return
+    }
+  }
+}
 }
 
 // Small reduction computes the whole reduction on a single thread.
@@ -40,26 +46,32 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1) -> (d0, d1)>
-#map1 = affine_map<(d0, d1) -> (d0)>
-module {
-  func.func @group_reduction() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x64xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 64], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x64xf32>> -> tensor<8x64xf32>
-    %3 = tensor.empty() : tensor<8xf32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<8xf32>) -> tensor<8xf32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<8x64xf32>) outs(%4 : tensor<8xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %6 = arith.addf %in, %out : f32
-      linalg.yield %6 : f32
-    } -> tensor<8xf32>
-    flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [8], strides = [1] : tensor<8xf32> -> !flow.dispatch.tensor<writeonly:tensor<8xf32>>
-    return
+hal.executable @group_reduction {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_reduction ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2
+    hal.return %x, %y, %z : index, index, index
   }
+  builtin.module {
+    func.func @group_reduction() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x64xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8xf32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 64], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x64xf32>> -> tensor<8x64xf32>
+      %3 = tensor.empty() : tensor<8xf32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<8xf32>) -> tensor<8xf32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<8x64xf32>) outs(%4 : tensor<8xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %6 = arith.addf %in, %out : f32
+        linalg.yield %6 : f32
+      } -> tensor<8xf32>
+      flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [8], strides = [1] : tensor<8xf32> -> !flow.dispatch.tensor<writeonly:tensor<8xf32>>
+      return
+    }
+  }
+}
 }
 
 //   CHECK-LABEL: func.func @group_reduction
@@ -97,34 +109,39 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1) -> (d0, d1)>
-#map1 = affine_map<(d0, d1) -> (d0)>
-#map2 = affine_map<(d0) -> (d0)>
-module {
-  func.func @group_elementwise_reduction_elementwise() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x64xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 64], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x64xf32>> -> tensor<8x64xf32>
-    %3 = tensor.empty() : tensor<8xf32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<8xf32>) -> tensor<8xf32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<8x64xf32>) outs(%4 : tensor<8xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %7 = arith.addf %in, %in : f32
-      %8 = arith.addf %7, %7 : f32
-      %9 = arith.addf %8, %out : f32
-      linalg.yield %9 : f32
-    } -> tensor<8xf32>
-    %6 = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = ["parallel"]} ins(%5 : tensor<8xf32>) outs(%3 : tensor<8xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %7 = math.sqrt %in : f32
-      linalg.yield %7 : f32
-    } -> tensor<8xf32>
-    flow.dispatch.tensor.store %6, %1, offsets = [0], sizes = [8], strides = [1] : tensor<8xf32> -> !flow.dispatch.tensor<writeonly:tensor<8xf32>>
-    return
+hal.executable @group_elementwise_reduction_elementwise {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_elementwise_reduction_elementwise ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1
+    hal.return %x, %y, %z : index, index, index
   }
+  builtin.module {
+    func.func @group_elementwise_reduction_elementwise() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x64xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8xf32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 64], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x64xf32>> -> tensor<8x64xf32>
+      %3 = tensor.empty() : tensor<8xf32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<8xf32>) -> tensor<8xf32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<8x64xf32>) outs(%4 : tensor<8xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %7 = arith.addf %in, %in : f32
+        %8 = arith.addf %7, %7 : f32
+        %9 = arith.addf %8, %out : f32
+        linalg.yield %9 : f32
+      } -> tensor<8xf32>
+      %6 = linalg.generic {indexing_maps = [affine_map<(d0) -> (d0)>, affine_map<(d0) -> (d0)>], iterator_types = ["parallel"]} ins(%5 : tensor<8xf32>) outs(%3 : tensor<8xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %7 = math.sqrt %in : f32
+        linalg.yield %7 : f32
+      } -> tensor<8xf32>
+      flow.dispatch.tensor.store %6, %1, offsets = [0], sizes = [8], strides = [1] : tensor<8xf32> -> !flow.dispatch.tensor<writeonly:tensor<8xf32>>
+      return
+    }
+  }
+}
 }
 
 //   CHECK-LABEL: func.func @group_elementwise_reduction_elementwise
@@ -163,26 +180,32 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1) -> (d0, d1)>
-#map1 = affine_map<(d0, d1) -> (d0)>
-module {
-  func.func @group_reduction_larger() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<33x1024xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<33xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [33, 1024], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<33x1024xf32>> -> tensor<33x1024xf32>
-    %3 = tensor.empty() : tensor<33xf32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<33xf32>) -> tensor<33xf32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<33x1024xf32>) outs(%4 : tensor<33xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %6 = arith.addf %in, %out : f32
-      linalg.yield %6 : f32
-    } -> tensor<33xf32>
-    flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [33], strides = [1] : tensor<33xf32> -> !flow.dispatch.tensor<writeonly:tensor<33xf32>>
-    return
+hal.executable @group_reduction_larger {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_reduction_larger ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2
+    hal.return %x, %y, %z : index, index, index
   }
+  builtin.module {
+    func.func @group_reduction_larger() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<33x1024xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<33xf32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [33, 1024], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<33x1024xf32>> -> tensor<33x1024xf32>
+      %3 = tensor.empty() : tensor<33xf32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<33xf32>) -> tensor<33xf32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<33x1024xf32>) outs(%4 : tensor<33xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %6 = arith.addf %in, %out : f32
+        linalg.yield %6 : f32
+      } -> tensor<33xf32>
+      flow.dispatch.tensor.store %5, %1, offsets = [0], sizes = [33], strides = [1] : tensor<33xf32> -> !flow.dispatch.tensor<writeonly:tensor<33xf32>>
+      return
+    }
+  }
+}
 }
 
 //   CHECK-LABEL: func.func @group_reduction_larger
@@ -221,59 +244,74 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0) -> (d0)>
-#map1 = affine_map<(d0) -> ()>
-module {
-  func.func @group_reduction_1d() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<64xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<f32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0], sizes = [64], strides = [1] : !flow.dispatch.tensor<readonly:tensor<64xf32>> -> tensor<64xf32>
-    %3 = tensor.empty() : tensor<f32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<f32>) -> tensor<f32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["reduction"]} ins(%2 : tensor<64xf32>) outs(%4 : tensor<f32>) {
-    ^bb0(%in: f32, %out: f32):
-      %6 = arith.addf %in, %out : f32
-      linalg.yield %6 : f32
-    } -> tensor<f32>
-    flow.dispatch.tensor.store %5, %1, offsets = [], sizes = [], strides = [] : tensor<f32> -> !flow.dispatch.tensor<writeonly:tensor<f32>>
-    return
+hal.executable @group_reduction_1d {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_reduction_1d ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2
+    hal.return %x, %y, %z : index, index, index
+  }
+  builtin.module {
+    func.func @group_reduction_1d() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<64xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<f32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0], sizes = [64], strides = [1] : !flow.dispatch.tensor<readonly:tensor<64xf32>> -> tensor<64xf32>
+      %3 = tensor.empty() : tensor<f32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<f32>) -> tensor<f32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0) -> (d0)>, affine_map<(d0) -> ()>], iterator_types = ["reduction"]} ins(%2 : tensor<64xf32>) outs(%4 : tensor<f32>) {
+      ^bb0(%in: f32, %out: f32):
+        %6 = arith.addf %in, %out : f32
+        linalg.yield %6 : f32
+      } -> tensor<f32>
+      flow.dispatch.tensor.store %5, %1, offsets = [], sizes = [], strides = [] : tensor<f32> -> !flow.dispatch.tensor<writeonly:tensor<f32>>
+      return
+    }
   }
 }
+}
+
 //   CHECK-LABEL: func.func @group_reduction_1d
 // CHECK-COUNT-5: gpu.shuffle  xor{{.*}}{{[[:space:]].*}}{{.*}} arith.addf
 
 // -----
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>
-#map1 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>
-#map2 = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
-module {
-  func.func @group_elementwise_reduction_elementwise_4d() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant -0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<2x4x8x64xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<2x4x8xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0, 0, 0], sizes = [2, 4, 8, 64], strides = [1, 1, 1, 1] : !flow.dispatch.tensor<readonly:tensor<2x4x8x64xf32>> -> tensor<2x4x8x64xf32>
-    %3 = tensor.empty() : tensor<2x4x8xf32>
-    %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<2x4x8xf32>) -> tensor<2x4x8xf32>
-    %5 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "parallel", "parallel", "reduction"]} ins(%2 : tensor<2x4x8x64xf32>) outs(%4 : tensor<2x4x8xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %7 = arith.addf %in, %in : f32
-      %8 = arith.addf %7, %7 : f32
-      %9 = arith.addf %8, %out : f32
-      linalg.yield %9 : f32
-    } -> tensor<2x4x8xf32>
-    %6 = linalg.generic {indexing_maps = [#map2, #map2], iterator_types = ["parallel", "parallel", "parallel"]} ins(%5 : tensor<2x4x8xf32>) outs(%3 : tensor<2x4x8xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %7 = math.sqrt %in : f32
-      linalg.yield %7 : f32
-    } -> tensor<2x4x8xf32>
-    flow.dispatch.tensor.store %6, %1, offsets = [0, 0, 0], sizes = [2, 4, 8], strides = [1, 1, 1] : tensor<2x4x8xf32> -> !flow.dispatch.tensor<writeonly:tensor<2x4x8xf32>>
-    return
+
+hal.executable @group_elementwise_reduction_elementwise_4d {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_elementwise_reduction_elementwise_4d ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index, %arg3: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2, %arg3
+    hal.return %x, %y, %z : index, index, index
   }
+  builtin.module {
+    func.func @group_elementwise_reduction_elementwise_4d() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant -0.000000e+00 : f32
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<2x4x8x64xf32>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<2x4x8xf32>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0, 0, 0], sizes = [2, 4, 8, 64], strides = [1, 1, 1, 1] : !flow.dispatch.tensor<readonly:tensor<2x4x8x64xf32>> -> tensor<2x4x8x64xf32>
+      %3 = tensor.empty() : tensor<2x4x8xf32>
+      %4 = linalg.fill ins(%cst : f32) outs(%3 : tensor<2x4x8xf32>) -> tensor<2x4x8xf32>
+      %5 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>, affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>],
+                           iterator_types = ["parallel", "parallel", "parallel", "reduction"]} ins(%2 : tensor<2x4x8x64xf32>) outs(%4 : tensor<2x4x8xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %7 = arith.addf %in, %in : f32
+        %8 = arith.addf %7, %7 : f32
+        %9 = arith.addf %8, %out : f32
+        linalg.yield %9 : f32
+      } -> tensor<2x4x8xf32>
+      %6 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2) -> (d0, d1, d2)>, affine_map<(d0, d1, d2) -> (d0, d1, d2)>],
+                           iterator_types = ["parallel", "parallel", "parallel"]} ins(%5 : tensor<2x4x8xf32>) outs(%3 : tensor<2x4x8xf32>) {
+      ^bb0(%in: f32, %out: f32):
+        %7 = math.sqrt %in : f32
+        linalg.yield %7 : f32
+      } -> tensor<2x4x8xf32>
+      flow.dispatch.tensor.store %6, %1, offsets = [0, 0, 0], sizes = [2, 4, 8], strides = [1, 1, 1] : tensor<2x4x8xf32> -> !flow.dispatch.tensor<writeonly:tensor<2x4x8xf32>>
+      return
+    }
+  }
+}
 }
 
 //   CHECK-LABEL: func.func @group_elementwise_reduction_elementwise_4d
@@ -281,33 +319,47 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1) -> (d0, d1)>
-#map1 = affine_map<(d0, d1) -> (d0)>
-module {
-  func.func @group_reduction_i8_12345() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %c0_i8 = arith.constant 0 : i8
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x12345xi8>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8x12345xi8>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 12345], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x12345xi8>> -> tensor<8x12345xi8>
-    %3 = tensor.empty() : tensor<8x12345xi8>
-    %4 = tensor.empty() : tensor<8xi8>
-    %5 = linalg.fill ins(%c0_i8 : i8) outs(%4 : tensor<8xi8>) -> tensor<8xi8>
-    %6 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<8x12345xi8>) outs(%5 : tensor<8xi8>) {
-    ^bb0(%in: i8, %out: i8):
-      %8 = arith.addi %in, %out : i8
-      linalg.yield %8 : i8
-    } -> tensor<8xi8>
-    %7 = linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]} ins(%2, %6 : tensor<8x12345xi8>, tensor<8xi8>) outs(%3 : tensor<8x12345xi8>) {
-    ^bb0(%in: i8, %in_0: i8, %out: i8):
-      %8 = arith.divui %in, %in_0 : i8
-      linalg.yield %8 : i8
-    } -> tensor<8x12345xi8>
-    flow.dispatch.tensor.store %7, %1, offsets = [0, 0], sizes = [8, 12345], strides = [1, 1] : tensor<8x12345xi8> -> !flow.dispatch.tensor<writeonly:tensor<8x12345xi8>>
-    return
+hal.executable @group_reduction_i8_12345 {
+hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+  hal.executable.export public @group_reduction_i8_12345 ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>) {
+  ^bb0(%arg0: !hal.device, %arg1: index, %arg2: index):
+    %x, %y, %z = flow.dispatch.workgroup_count_from_dag_root %arg1, %arg2
+    hal.return %x, %y, %z : index, index, index
+  }
+  builtin.module {
+    func.func @group_reduction_i8_12345() {
+      %c0 = arith.constant 0 : index
+      %cst = arith.constant 0 : i8
+      %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<readonly:tensor<8x12345xi8>>
+      %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<8x12345xi8>>
+      %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [8, 12345], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<8x12345xi8>> -> tensor<8x12345xi8>
+      %3 = tensor.empty() : tensor<8x12345xi8>
+      %4 = tensor.empty() : tensor<8xi8>
+      %5 = linalg.fill ins(%cst : i8) outs(%4 : tensor<8xi8>) -> tensor<8xi8>
+      %6 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>],
+                           iterator_types = ["parallel", "reduction"]}
+        ins(%2 : tensor<8x12345xi8>)
+       outs(%5 : tensor<8xi8>) {
+      ^bb0(%in: i8, %out: i8):
+        %6 = arith.addi %in, %out : i8
+        linalg.yield %6 : i8
+      } -> tensor<8xi8>
+      %7 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>, affine_map<(d0, d1) -> (d0, d1)>],
+                           iterator_types = ["parallel", "parallel"]}
+        ins(%2, %6 : tensor<8x12345xi8>, tensor<8xi8>)
+       outs(%3 : tensor<8x12345xi8>) {
+      ^bb0(%in: i8, %in_0: i8, %out: i8):
+        %8 = arith.divui %in, %in_0 : i8
+        linalg.yield %8 : i8
+      } -> tensor<8x12345xi8>
+      flow.dispatch.tensor.store %7, %1, offsets = [0, 0], sizes = [8, 12345], strides = [1, 1] : tensor<8x12345xi8> -> !flow.dispatch.tensor<writeonly:tensor<8x12345xi8>>
+      return
+    }
   }
 }
+}
+
+
 //   CHECK-LABEL: func.func @group_reduction_i8_12345
 //     CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //     CHECK-DAG:   %[[workgroup_id_x:.*]] = hal.interface.workgroup.id[0] : index
@@ -349,28 +401,39 @@ module {
 #executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
 #map = affine_map<(d0, d1) -> (d0, d1)>
 #map1 = affine_map<(d0, d1) -> (d0)>
-module {
-  func.func @reduction_2d_trailing_elementwise_static_dispatch_0_generic_128x10_f32() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant 0.000000e+00 : f32
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<128x10xf32>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<128x10xf32>>
-    %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [128, 10], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<128x10xf32>> -> tensor<128x10xf32>
-    %3 = tensor.empty() : tensor<128x10xf32>
-    %4 = tensor.empty() : tensor<128xf32>
-    %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<128xf32>) -> tensor<128xf32>
-    %6 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<128x10xf32>) outs(%5 : tensor<128xf32>) {
-    ^bb0(%in: f32, %out: f32):
-      %8 = arith.addf %in, %out : f32
-      linalg.yield %8 : f32
-    } -> tensor<128xf32>
-    %7 = linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]} ins(%2, %6 : tensor<128x10xf32>, tensor<128xf32>) outs(%3 : tensor<128x10xf32>) {
-    ^bb0(%in: f32, %in_0: f32, %out: f32):
-      %8 = arith.divf %in, %in_0 : f32
-      linalg.yield %8 : f32
-    } -> tensor<128x10xf32>
-    flow.dispatch.tensor.store %7, %1, offsets = [0, 0], sizes = [128, 10], strides = [1, 1] : tensor<128x10xf32> -> !flow.dispatch.tensor<writeonly:tensor<128x10xf32>>
-    return
+#pipeline_layout = #hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer>]>]>
+
+hal.executable @reduction_2d_trailing_elementwise_static_dispatch_0 {
+  hal.executable.variant public @cuda_nvptx_fb target(#executable_target_cuda_nvptx_fb) {
+    hal.executable.export public @reduction_2d_trailing_elementwise_static_dispatch_0_generic_128x10_f32 ordinal(0) layout(#pipeline_layout) {
+    ^bb0(%arg0: !hal.device):
+      %x, %y, %z = flow.dispatch.workgroup_count_from_slice
+      hal.return %x, %y, %z : index, index, index
+    }
+    builtin.module {
+      func.func @reduction_2d_trailing_elementwise_static_dispatch_0_generic_128x10_f32() {
+        %c0 = arith.constant 0 : index
+        %cst = arith.constant 0.000000e+00 : f32
+        %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<128x10xf32>>
+        %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<128x10xf32>>
+        %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [128, 10], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<128x10xf32>> -> tensor<128x10xf32>
+        %3 = tensor.empty() : tensor<128x10xf32>
+        %4 = tensor.empty() : tensor<128xf32>
+        %5 = linalg.fill ins(%cst : f32) outs(%4 : tensor<128xf32>) -> tensor<128xf32>
+        %6 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction"]} ins(%2 : tensor<128x10xf32>) outs(%5 : tensor<128xf32>) {
+        ^bb0(%in: f32, %out: f32):
+          %8 = arith.addf %in, %out : f32
+          linalg.yield %8 : f32
+        } -> tensor<128xf32>
+        %7 = linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]} ins(%2, %6 : tensor<128x10xf32>, tensor<128xf32>) outs(%3 : tensor<128x10xf32>) {
+        ^bb0(%in: f32, %in_0: f32, %out: f32):
+          %8 = arith.divf %in, %in_0 : f32
+          linalg.yield %8 : f32
+        } -> tensor<128x10xf32>
+        flow.dispatch.tensor.store %7, %1, offsets = [0, 0], sizes = [128, 10], strides = [1, 1] : tensor<128x10xf32> -> !flow.dispatch.tensor<writeonly:tensor<128x10xf32>>
+        return
+      }
+    }
   }
 }
 
@@ -400,43 +463,47 @@ module {
 
 // -----
 
-#executable_target_cuda_nvptx_fb = #hal.executable.target<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>
-#map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
-#map1 = affine_map<(d0, d1, d2) -> (d0, d1)>
-#map2 = affine_map<(d0, d1, d2) -> (d1, d2)>
-#map3 = affine_map<(d0, d1, d2) -> (d0)>
-module {
-  func.func @i4_dequant_matvec() attributes {hal.executable.target = #executable_target_cuda_nvptx_fb} {
-    %c0 = arith.constant 0 : index
-    %cst = arith.constant 0.000000e+00 : f16
-    %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32x128xi4>>
-    %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>>
-    %2 = hal.interface.binding.subspan set(0) binding(2) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>>
-    %3 = hal.interface.binding.subspan set(0) binding(3) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<32x128xf16>>
-    %4 = hal.interface.binding.subspan set(0) binding(4) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<4096xf16>>
-    %5 = flow.dispatch.tensor.load %0, offsets = [0, 0, 0], sizes = [4096, 32, 128], strides = [1, 1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32x128xi4>> -> tensor<4096x32x128xi4>
-    %6 = flow.dispatch.tensor.load %1, offsets = [0, 0], sizes = [4096, 32], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>> -> tensor<4096x32xf16>
-    %7 = flow.dispatch.tensor.load %2, offsets = [0, 0], sizes = [4096, 32], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>> -> tensor<4096x32xf16>
-    %8 = flow.dispatch.tensor.load %3, offsets = [0, 0], sizes = [32, 128], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<32x128xf16>> -> tensor<32x128xf16>
-    %9 = tensor.empty() : tensor<4096xf16>
-    %10 = tensor.empty() : tensor<4096x32x128xf16>
-    %11 = linalg.fill ins(%cst : f16) outs(%9 : tensor<4096xf16>) -> tensor<4096xf16>
-    %12 = linalg.generic {indexing_maps = [#map, #map1, #map1, #map], iterator_types = ["parallel", "parallel", "parallel"]} ins(%5, %6, %7 : tensor<4096x32x128xi4>, tensor<4096x32xf16>, tensor<4096x32xf16>) outs(%10 : tensor<4096x32x128xf16>) {
-    ^bb0(%in: i4, %in_0: f16, %in_1: f16, %out: f16):
-      %14 = arith.extui %in : i4 to i32
-      %15 = arith.uitofp %14 : i32 to f16
-      %16 = arith.subf %15, %in_1 : f16
-      %17 = arith.mulf %16, %in_0 : f16
-      linalg.yield %17 : f16
-    } -> tensor<4096x32x128xf16>
-    %13 = linalg.generic {indexing_maps = [#map2, #map, #map3], iterator_types = ["parallel", "reduction", "reduction"]} ins(%8, %12 : tensor<32x128xf16>, tensor<4096x32x128xf16>) outs(%11 : tensor<4096xf16>) {
-    ^bb0(%in: f16, %in_0: f16, %out: f16):
-      %14 = arith.mulf %in, %in_0 : f16
-      %15 = arith.addf %14, %out : f16
-      linalg.yield %15 : f16
-    } -> tensor<4096xf16>
-    flow.dispatch.tensor.store %13, %4, offsets = [0], sizes = [4096], strides = [1] : tensor<4096xf16> -> !flow.dispatch.tensor<writeonly:tensor<4096xf16>>
-    return
+hal.executable private @i4_dequant_matvec {
+  hal.executable.variant public @cuda_nvptx_fb target(<"cuda", "cuda-nvptx-fb", {target_arch = "sm_60"}>) {
+    hal.executable.export public @i4_dequant_matvec ordinal(0) layout(#hal.pipeline.layout<push_constants = 0, sets = [<0, bindings = [<0, storage_buffer, ReadOnly>, <1, storage_buffer, ReadOnly>, <2, storage_buffer, ReadOnly>, <3, storage_buffer, ReadOnly>, <4, storage_buffer>]>]>) {
+    ^bb0(%arg0: !hal.device):
+      %x, %y, %z = flow.dispatch.workgroup_count_from_slice
+      hal.return %x, %y, %z : index, index, index
+    }
+    builtin.module {
+      func.func @i4_dequant_matvec() {
+        %c0 = arith.constant 0 : index
+        %cst = arith.constant 0.000000e+00 : f16
+        %0 = hal.interface.binding.subspan set(0) binding(0) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32x128xi4>>
+        %1 = hal.interface.binding.subspan set(0) binding(1) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>>
+        %2 = hal.interface.binding.subspan set(0) binding(2) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>>
+        %3 = hal.interface.binding.subspan set(0) binding(3) type(storage_buffer) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<32x128xf16>>
+        %4 = hal.interface.binding.subspan set(0) binding(4) type(storage_buffer) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<4096xf16>>
+        %5 = flow.dispatch.tensor.load %0, offsets = [0, 0, 0], sizes = [4096, 32, 128], strides = [1, 1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32x128xi4>> -> tensor<4096x32x128xi4>
+        %6 = flow.dispatch.tensor.load %1, offsets = [0, 0], sizes = [4096, 32], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>> -> tensor<4096x32xf16>
+        %7 = flow.dispatch.tensor.load %2, offsets = [0, 0], sizes = [4096, 32], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<4096x32xf16>> -> tensor<4096x32xf16>
+        %8 = flow.dispatch.tensor.load %3, offsets = [0, 0], sizes = [32, 128], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<32x128xf16>> -> tensor<32x128xf16>
+        %9 = tensor.empty() : tensor<4096xf16>
+        %10 = tensor.empty() : tensor<4096x32x128xf16>
+        %11 = linalg.fill ins(%cst : f16) outs(%9 : tensor<4096xf16>) -> tensor<4096xf16>
+        %12 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2) -> (d0, d1, d2)>, affine_map<(d0, d1, d2) -> (d0, d1)>, affine_map<(d0, d1, d2) -> (d0, d1)>, affine_map<(d0, d1, d2) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel"]} ins(%5, %6, %7 : tensor<4096x32x128xi4>, tensor<4096x32xf16>, tensor<4096x32xf16>) outs(%10 : tensor<4096x32x128xf16>) {
+        ^bb0(%in: i4, %in_0: f16, %in_1: f16, %out: f16):
+          %14 = arith.extui %in : i4 to i32
+          %15 = arith.uitofp %14 : i32 to f16
+          %16 = arith.subf %15, %in_1 : f16
+          %17 = arith.mulf %16, %in_0 : f16
+          linalg.yield %17 : f16
+        } -> tensor<4096x32x128xf16>
+        %13 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2) -> (d1, d2)>, affine_map<(d0, d1, d2) -> (d0, d1, d2)>, affine_map<(d0, d1, d2) -> (d0)>], iterator_types = ["parallel", "reduction", "reduction"]} ins(%8, %12 : tensor<32x128xf16>, tensor<4096x32x128xf16>) outs(%11 : tensor<4096xf16>) {
+        ^bb0(%in: f16, %in_0: f16, %out: f16):
+          %14 = arith.mulf %in, %in_0 : f16
+          %15 = arith.addf %14, %out : f16
+          linalg.yield %15 : f16
+        } -> tensor<4096xf16>
+        flow.dispatch.tensor.store %13, %4, offsets = [0], sizes = [4096], strides = [1] : tensor<4096xf16> -> !flow.dispatch.tensor<writeonly:tensor<4096xf16>>
+        return
+      }
+    }
   }
 }
 

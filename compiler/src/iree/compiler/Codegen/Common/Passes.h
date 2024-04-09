@@ -212,6 +212,11 @@ std::unique_ptr<Pass> createIREEExpandStridedMetadataPass();
 std::unique_ptr<InterfacePass<FunctionOpInterface>>
 createInstrumentMemoryAccessesPass();
 
+/// Pass to lower an executable using transform dialect sequence provided in the
+/// module
+std::unique_ptr<OperationPass<ModuleOp>>
+createLowerExecutableUsingTransformDialectPass();
+
 /// Pass to lower ukernel operations into their defined function calls.
 std::unique_ptr<OperationPass<ModuleOp>> createLowerUKernelOpsToCallsPass();
 

@@ -21,9 +21,8 @@ def ROCDLLowerExecutableTarget : InterfacePass<
       "mlir::iree_compiler::createROCDLLowerExecutableTargetPass()";
 }
 
-def ROCDLSelectLoweringStrategy : InterfacePass<
-    "iree-rocdl-select-lowering-strategy",
-    "mlir::FunctionOpInterface"> {
+def ROCDLSelectLoweringStrategy :
+    Pass<"iree-rocdl-select-lowering-strategy", "ModuleOp"> {
   let summary = "Select a suitable lowering strategy for an IREE "
                 "hal.executable.variant op";
   let constructor =

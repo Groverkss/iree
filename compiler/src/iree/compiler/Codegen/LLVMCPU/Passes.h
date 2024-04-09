@@ -33,7 +33,7 @@ createLLVMCPUEmitVectorizationRemarksPass();
 /// Pass to select a lowering strategy for a hal.executable.variant operation.
 /// The variant is annotated with the selected strategies, which are
 /// subsequently ingested by LLVMCPULowerExecutableTargetPass.
-std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createLLVMCPUSelectLoweringStrategyPass();
 
 /// Pass to lower the module an hal.executable.variant operation to external

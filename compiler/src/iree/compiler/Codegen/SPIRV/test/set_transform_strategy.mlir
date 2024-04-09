@@ -1,5 +1,5 @@
 // RUN: iree-opt %s --split-input-file \
-// RUN:   --pass-pipeline="builtin.module(func.func(iree-spirv-select-lowering-strategy-pass))"\
+// RUN:   --pass-pipeline="builtin.module(iree-spirv-select-lowering-strategy-pass)"\
 // RUN:   --iree-spirv-enable-transform-dialect-jit=true | FileCheck %s
 
 #executable_target_vulkan_spirv_fb = #hal.executable.target<"vulkan-spirv", "vulkan-spirv-fb", {spirv.target_env = #spirv.target_env<#spirv.vce<v1.6, [Shader, Float16, StorageBuffer16BitAccess, StorageUniform16, CooperativeMatrixKHR], [SPV_KHR_variable_pointers, SPV_KHR_cooperative_matrix]>, NVIDIA:DiscreteGPU, #spirv.resource_limits<max_compute_shared_memory_size = 49152, max_compute_workgroup_invocations = 1024, max_compute_workgroup_size = [2147483647, 65535, 65535], cooperative_matrix_properties_khr = [#spirv.coop_matrix_props_khr<m_size = 16, n_size = 16, k_size = 8, a_type = f32, b_type = f32, c_type = f32, result_type = f32, acc_sat = false, scope = <Subgroup>>]>>}>

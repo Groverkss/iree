@@ -1,5 +1,5 @@
 // RUN: iree-opt --split-input-file \
-// RUN:   --pass-pipeline='builtin.module(func.func(iree-codegen-decompose-softmax, iree-spirv-select-lowering-strategy-pass, iree-spirv-lower-executable-target-pass))' \
+// RUN:   --pass-pipeline='builtin.module(func.func(iree-codegen-decompose-softmax), iree-spirv-select-lowering-strategy-pass, func.func(iree-spirv-lower-executable-target-pass))' \
 // RUN:   %s | FileCheck %s
 
 #executable_target_vulkan_spirv_fb = #hal.executable.target<"vulkan-spirv", "vulkan-spirv-fb", {spirv.target_env = #spirv.target_env<#spirv.vce<v1.3, [Shader, GroupNonUniform, GroupNonUniformShuffle], [SPV_KHR_storage_buffer_storage_class]>, #spirv.resource_limits<max_compute_workgroup_size = [128, 128, 64], cooperative_matrix_properties_khr = []>>}>

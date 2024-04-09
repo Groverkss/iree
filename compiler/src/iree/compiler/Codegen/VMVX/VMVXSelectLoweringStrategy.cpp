@@ -50,15 +50,17 @@ public:
 } // namespace
 
 void VMVXSelectLoweringStrategyPass::runOnOperation() {
-  auto funcOp = getOperation();
-
-  // Set the strategy with default heuristics.
-  if (failed(initVMVXLaunchConfig(funcOp))) {
-    return signalPassFailure();
+  auto moduleOp = getOperation();
+  for (auto funcOp : moduleOp.getOps<FunctionOpInterface>()) {
+    // Set the strategy with default heuristics.
+    if (failed(initVMVXLaunchConfig(funcOp))) {
+      funcOp.emitOpError("failed to set lowering configuration");
+      return signalPassFailure();
+    }
   }
 }
 
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createVMVXSelectLoweringStrategyPass() {
   return std::make_unique<VMVXSelectLoweringStrategyPass>();
 }

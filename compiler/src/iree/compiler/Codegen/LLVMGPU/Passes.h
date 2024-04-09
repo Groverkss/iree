@@ -92,7 +92,7 @@ std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
 createLLVMGPUDistribute();
 
 /// Create pass selecting the lowering strategy for LLVMGPU.
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createLLVMGPUSelectLoweringStrategyPass();
 
 /// Create pass calling the dynamic pipeline for LLVMGPU.

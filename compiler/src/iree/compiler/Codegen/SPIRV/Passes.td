@@ -93,8 +93,7 @@ def SPIRVMaterializeExecutableConditions :
 }
 
 def SPIRVSelectLoweringStrategy :
-    InterfacePass<"iree-spirv-select-lowering-strategy-pass",
-         "mlir::FunctionOpInterface"> {
+    Pass<"iree-spirv-select-lowering-strategy-pass", "ModuleOp"> {
   let summary = "Select the IREE::HAL::DispatchLoweringPassPipeline for lowering"
                 "to SPIR-V";
   let constructor =

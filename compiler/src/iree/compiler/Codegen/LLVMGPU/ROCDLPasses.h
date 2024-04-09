@@ -22,7 +22,7 @@ std::unique_ptr<InterfacePass<FunctionOpInterface>>
 createROCDLLowerExecutableTargetPass();
 
 /// Creates a pass to select the lowering strategy for converting to ROCDL.
-std::unique_ptr<InterfacePass<FunctionOpInterface>>
+std::unique_ptr<OperationPass<ModuleOp>>
 createROCDLSelectLoweringStrategyPass();
 
 //===----------------------------------------------------------------------===//

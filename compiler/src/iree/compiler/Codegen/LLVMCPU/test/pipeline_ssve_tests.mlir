@@ -1,4 +1,4 @@
-// RUN: iree-opt --pass-pipeline='builtin.module(func.func(iree-llvmcpu-select-lowering-strategy, iree-llvmcpu-lower-executable-target))' --split-input-file %s | FileCheck %s
+// RUN: iree-opt --pass-pipeline='builtin.module(iree-llvmcpu-select-lowering-strategy, func.func(iree-llvmcpu-lower-executable-target))' --split-input-file %s | FileCheck %s
 
 // Check Armv9 Streaming SVE mode is enabled for the following pipelines:
 //

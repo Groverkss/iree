@@ -32,8 +32,7 @@ std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
 createVMVXMaterializeEncodingPass();
 
 /// Pass to select a lowering strategy for a hal.executable.variant operation.
-std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
-createVMVXSelectLoweringStrategyPass();
+std::unique_ptr<OperationPass<ModuleOp>> createVMVXSelectLoweringStrategyPass();
 
 /// Pass to lower the module an hal.executable.variant operation to external
 /// dialect.

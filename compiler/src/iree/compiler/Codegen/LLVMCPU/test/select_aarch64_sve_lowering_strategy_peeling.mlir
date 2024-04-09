@@ -1,4 +1,4 @@
-// RUN: iree-opt --pass-pipeline='builtin.module(func.func(iree-llvmcpu-select-lowering-strategy))' \
+// RUN: iree-opt --pass-pipeline='builtin.module(iree-llvmcpu-select-lowering-strategy)' \
 // RUN:   --iree-llvmcpu-enable-scalable-vectorization=true --iree-llvmcpu-vector-pproc-strategy=peel \
 // RUN:   --split-input-file %s | FileCheck %s
 
