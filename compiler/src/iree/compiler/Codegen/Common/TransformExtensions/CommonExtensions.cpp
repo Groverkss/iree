@@ -779,6 +779,11 @@ DiagnosedSilenceableFailure transform_dialect::IREEBufferizeOp::apply(
   options.memCpyFn = memCpyFn;
   options.testAnalysisOnly = getTestAnalysisOnly();
   options.printConflicts = getPrintConflicts();
+  options.defaultMemorySpaceFn = [&](TensorType t) -> std::optional<Attribute> {
+    Attribute addressSpaceAttr = gpu::AddressSpaceAttr::get(
+        t.getContext(), gpu::GPUDialect::getWorkgroupAddressSpace());
+    return addressSpaceAttr;
+  };
   if (failed(runIREEOneShotBufferize(target, options)))
     return mlir::emitDefiniteFailure(target, "bufferization failed");
 
