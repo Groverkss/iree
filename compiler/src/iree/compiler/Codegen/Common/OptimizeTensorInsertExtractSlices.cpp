@@ -38,14 +38,16 @@ public:
 
 void OptimizeTensorInsertExtractSlicesPass::runOnOperation() {
   auto funcOp = getOperation();
-  linalg::hoistRedundantVectorTransfers(cast<func::FuncOp>(funcOp));
-  IRRewriter rewriter(funcOp->getContext());
+  MLIRContext *context = &getContext();
+
+  IRRewriter rewriter(context);
   // TODO: walking in some reverse / inside-out order would be more efficient
   // and would capture more cases.
   funcOp.walk(
-      [&](scf::ForOp forOp) { hoistLoopInvariantSubsets(rewriter, forOp); });
-  vector::transferOpflowOpt(rewriter, funcOp);
-  MLIRContext *context = &getContext();
+      [&](scf::ForOp forOp) { 
+      LDBG("trying to hoist loop invariant subsets out of\n" << forOp);
+      hoistLoopInvariantSubsets(rewriter, forOp); 
+    });
 
   LDBG("after hoisting redundant transfers on tensors\n" << funcOp);
 

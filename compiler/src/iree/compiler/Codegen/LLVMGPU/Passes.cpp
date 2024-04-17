@@ -210,7 +210,14 @@ static void addGPUVectorizationPasses(OpPassManager &pm) {
   options.enableCleanup = false;
   options.foldCastIntoContract = true;
   pm.addNestedPass<func::FuncOp>(createGenericVectorizationPass(options));
+
+  // It is important that we run canonicalize, cse after vectorization,
+  // otherwise there are multiple redundant transfer_reads which conflict with
+  // loop invariant subset hoisting.
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
+  pm.addNestedPass<func::FuncOp>(createCSEPass());
   pm.addNestedPass<func::FuncOp>(createOptimizeTensorInsertExtractSlicesPass());
+
   pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<func::FuncOp>(createCSEPass());
 }
@@ -576,6 +583,9 @@ void addGPUVectorDistributePassPipeline(OpPassManager &pm) {
   // Problem specific (reduction) tiling.
   nestedModulePM.addNestedPass<func::FuncOp>(
       createGPUTensorTileToSerialLoops());
+  // TODO: A lot needs to be fixed with this pass.
+  nestedModulePM.addNestedPass<func::FuncOp>(
+      IREE::LinalgExt::createTileAndDecomposeAttentionPass());
 
   // Generalize all named ops so that we can fold away unit extent dims. By this
   // point, all tiling is finished so the tiling configurations on those ops can
@@ -584,10 +594,10 @@ void addGPUVectorDistributePassPipeline(OpPassManager &pm) {
   // this point.
   nestedModulePM.addNestedPass<func::FuncOp>(
       createLinalgGeneralizeNamedOpsPass());
-  LinalgFoldUnitExtentDimsPassOptions options;
-  options.useRankReducingSlices = true;
-  nestedModulePM.addNestedPass<func::FuncOp>(
-      mlir::createLinalgFoldUnitExtentDimsPass(options));
+  // LinalgFoldUnitExtentDimsPassOptions options;
+  // options.useRankReducingSlices = true;
+  // nestedModulePM.addNestedPass<func::FuncOp>(
+  //     mlir::createLinalgFoldUnitExtentDimsPass(options));
   nestedModulePM.addPass(createCanonicalizerPass());
   nestedModulePM.addPass(createCSEPass());
 
@@ -595,10 +605,12 @@ void addGPUVectorDistributePassPipeline(OpPassManager &pm) {
       createOptimizeTensorInsertExtractSlicesPass());
 
   // Linalg -> Vector
+  nestedModulePM.addNestedPass<func::FuncOp>(
+      createConvertToDestinationPassingStylePass());
   addGPUVectorizationPasses(nestedModulePM);
 
   // Allocate tensors for copies to shared memory.
-  nestedModulePM.addNestedPass<func::FuncOp>(createGPUVectorAlloc());
+  // nestedModulePM.addNestedPass<func::FuncOp>(createGPUVectorAlloc());
 
   // Tensor -> Memref
   addVectorBufferizePasses(nestedModulePM);
@@ -607,9 +619,15 @@ void addGPUVectorDistributePassPipeline(OpPassManager &pm) {
   nestedModulePM.addNestedPass<func::FuncOp>(
       createHoistStaticallyBoundAllocationsPass());
 
-  // Vector SIMD -> Vector SIMT
+  // Get MMA in right form.
   nestedModulePM.addNestedPass<func::FuncOp>(
       createLLVMGPUCastTypeToFitMMAPass());
+  nestedModulePM.addNestedPass<func::FuncOp>(
+      createAMDGPUPrepareForChainedMatmulPass());
+  nestedModulePM.addPass(createCanonicalizerPass());
+  nestedModulePM.addPass(createCSEPass());
+
+  // Vector SIMD -> Vector SIMT
   nestedModulePM.addNestedPass<func::FuncOp>(createLLVMGPUVectorDistribute());
   nestedModulePM.addPass(createCanonicalizerPass());
   nestedModulePM.addPass(createCSEPass());

@@ -551,13 +551,14 @@ NestedLayoutAttr permuteAndCreateNestedLayout(
       SmallVector<bool>(threadBasis.size(), true));
 }
 
-std::optional<std::tuple<VectorExt::VectorLayoutInterface,
-                         VectorExt::VectorLayoutInterface,
-                         VectorExt::VectorLayoutInterface>>
+FailureOr<std::tuple<VectorExt::VectorLayoutInterface,
+                     VectorExt::VectorLayoutInterface,
+                     VectorExt::VectorLayoutInterface>>
 MMAScheduleAttr::getContractionLayout(vector::ContractionOp contractOp) const {
   VectorContractOpInfo opInfo(contractOp);
-  if (opInfo.getOpKind() == VectorContractOpInfo::OpKind::UNKNOWN)
-    return std::nullopt;
+  if (opInfo.getOpKind() == VectorContractOpInfo::OpKind::UNKNOWN) {
+    return failure();
+  }
 
   auto [aM, bN] = *opInfo.getOperandMNIndex();
   auto [aK, bK] = *opInfo.getOperandKIndex();
@@ -672,7 +673,62 @@ MMAScheduleAttr::getContractionLayout(vector::ContractionOp contractOp) const {
       /*elementCount=*/bCounts.element, /*elementOrder=*/bOrders.element,
       subgroupBasis, bThreadBasis);
 
-  return std::make_tuple(aLayout, bLayout, cLayout);
+  std::tuple<VectorLayoutInterface, VectorLayoutInterface,
+             VectorLayoutInterface>
+      result = std::make_tuple(aLayout, bLayout, cLayout);
+  return result;
+}
+
+MmaInterfaceAttr MMAScheduleAttr::getTargetIntrinsic() const {
+  return getIntrinsic();
+}
+
+FailureOr<std::tuple<VectorExt::VectorLayoutInterface,
+                     VectorExt::VectorLayoutInterface,
+                     VectorExt::VectorLayoutInterface>>
+AttentionScheduleAttr::getContractionLayout(
+    vector::ContractionOp contractOp) const {
+
+  scf::ForOp forOp =
+      llvm::dyn_cast_or_null<scf::ForOp>(contractOp->getParentOp());
+  if (!forOp) {
+    return failure();
+  }
+
+  // There should be 2 contracts in the for loop.
+  SmallVector<vector::ContractionOp> contractOps;
+  for (Operation &op : forOp.getRegion().getOps()) {
+    auto contract = llvm::dyn_cast<vector::ContractionOp>(&op);
+    if (!contract) {
+      continue;
+    }
+    contractOps.push_back(contract);
+  }
+
+  if (contractOps.size() != 2) {
+    return failure();
+  }
+
+  if (contractOp == contractOps[0]) {
+    // Q.KT
+    int64_t k2TileCount = 1;
+    int64_t kTileCount = 1;
+    auto qKTSchedule = MMAScheduleAttr::get(
+        getContext(), getTargetIntrinsic(), 1, getSubgroupQCount(), k2TileCount,
+        getSubgroupQTileCount(), kTileCount);
+    return qKTSchedule.getContractionLayout(contractOp);
+  }
+
+  if (contractOp == contractOps[1]) {
+    // S.V
+    return failure();
+  }
+
+  return failure();
+}
+
+MmaInterfaceAttr AttentionScheduleAttr::getTargetIntrinsic() const {
+  return getIntrinsic();
 }
 
 //===----------------------------------------------------------------------===//

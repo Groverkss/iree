@@ -312,8 +312,14 @@ NestedLayoutAttr::project(ArrayRef<bool> droppedDims) const {
   };
   SmallVector<bool> subgroupMask(getSubgroupActiveIds());
   SmallVector<bool> threadMask(getThreadActiveIds());
-  composeMasks(subgroupMask, droppedDims);
-  composeMasks(threadMask, droppedDims);
+
+  SmallVector<bool> invertedDroppedThreadMask =
+      applyPermutation(droppedDims, invertPermutationVector(getThreadOrder()));
+  composeMasks(subgroupMask, invertedDroppedThreadMask);
+
+  SmallVector<bool> invertedDroppedSubgroupMask =
+      applyPermutation(droppedDims, invertPermutationVector(getThreadOrder()));
+  composeMasks(threadMask, invertedDroppedSubgroupMask);
 
   return NestedLayoutAttr::get(getContext(), subgroupCount, subgroupOrder,
                                batchCount, batchOrder, outerCount, outerOrder,
