@@ -840,6 +840,7 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
     funcPassManager.addPass(createCSEPass());
   }
 
+  funcPassManager.addPass(createLoopInvariantCodeMotionPass());
   funcPassManager.addPass(createOptimizeTensorInsertExtractSlicesPass());
 
   // Linalg -> Vector
