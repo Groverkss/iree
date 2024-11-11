@@ -64,6 +64,7 @@ iree_compiler_cc_library(
         "GPUGreedilyDistributeToThreads.cpp",
         "GPUInferMemorySpace.cpp",
         "GPULowerToUKernels.cpp",
+        "GPUMarkers.cpp",
         "GPUMaterializeEncoding.cpp",
         "GPUMultiBuffering.cpp",
         "GPUNestedLayoutDistributionPatterns.cpp",
@@ -85,6 +86,7 @@ iree_compiler_cc_library(
         "WorkgroupReordering.cpp",
     ],
     hdrs = [
+        "GPUMarkers.h",
         "GPUPatterns.h",
         "GPUVectorDistribution.h",
         "Passes.h",

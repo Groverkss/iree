@@ -43,6 +43,7 @@ iree_cc_library(
   NAME
     CommonGPUPasses
   HDRS
+    "GPUMarkers.h"
     "GPUPatterns.h"
     "GPUVectorDistribution.h"
     "Passes.h"
@@ -62,6 +63,7 @@ iree_cc_library(
     "GPUGreedilyDistributeToThreads.cpp"
     "GPUInferMemorySpace.cpp"
     "GPULowerToUKernels.cpp"
+    "GPUMarkers.cpp"
     "GPUMaterializeEncoding.cpp"
     "GPUMultiBuffering.cpp"
     "GPUNestedLayoutDistributionPatterns.cpp"
