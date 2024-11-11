@@ -43,6 +43,8 @@ MMASingleSubgroupLayout getBSingleSubgroupLayout(MmaInterfaceAttr mmaKind);
 
 MMASingleSubgroupLayout getCSingleSubgroupLayout(MmaInterfaceAttr mmaKind);
 
+StringRef getTilingLevelName(GPU::TilingLevel level);
+
 } // namespace mlir::iree_compiler::IREE::GPU
 
 // clang-format off

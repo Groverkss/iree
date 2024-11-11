@@ -16,8 +16,9 @@ void setBasis(MLIRContext *context, SmallVector<NamedAttribute> &attrs,
               ArrayRef<int64_t> mapping);
 
 LogicalResult getBasis(IREE::GPU::LoweringConfigAttr config,
-                       IREE::GPU::TilingLevel level, ArrayRef<int64_t> basis,
-                       ArrayRef<int64_t> mapping);
+                       IREE::GPU::TilingLevel level,
+                       SmallVector<int64_t> &basis,
+                       SmallVector<int64_t> &mapping);
 
 } // namespace mlir::iree_compiler::gpu_markers
 

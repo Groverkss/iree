@@ -10,9 +10,8 @@ namespace mlir::iree_compiler::gpu_markers {
 
 const char *kBasisSuffix = "basis";
 
-static std::string getBasisLevel(IREE::GPU::TilingLevel level) {
-  return std::string(IREE::GPU::stringifyTilingLevel(level)) + "_" +
-         kBasisSuffix;
+static std::string getBasisLevelName(IREE::GPU::TilingLevel level) {
+  return std::string(IREE::GPU::getTilingLevelName(level)) + "_" + kBasisSuffix;
 }
 
 void setBasis(MLIRContext *context, SmallVector<NamedAttribute> &attrs,
@@ -21,14 +20,15 @@ void setBasis(MLIRContext *context, SmallVector<NamedAttribute> &attrs,
   Builder b(context);
   ArrayAttr basisAttr = b.getArrayAttr(
       {b.getDenseI64ArrayAttr(basis), b.getDenseI64ArrayAttr(mapping)});
-  attrs.emplace_back(b.getNamedAttr(getBasisLevel(level), basisAttr));
+  attrs.emplace_back(b.getNamedAttr(getBasisLevelName(level), basisAttr));
 }
 
 LogicalResult getBasis(IREE::GPU::LoweringConfigAttr config,
-                       IREE::GPU::TilingLevel level, ArrayRef<int64_t> basis,
-                       ArrayRef<int64_t> mapping) {
+                       IREE::GPU::TilingLevel level,
+                       SmallVector<int64_t> &basis,
+                       SmallVector<int64_t> &mapping) {
   auto basisAttr = dyn_cast_or_null<ArrayAttr>(
-      config.getAttributes().get(getBasisLevel(level)));
+      config.getAttributes().get(getBasisLevelName(level)));
   if (!basisAttr) {
     return failure();
   }
@@ -40,7 +40,7 @@ LogicalResult getBasis(IREE::GPU::LoweringConfigAttr config,
 
   DenseI64ArrayAttr basisArray = dyn_cast_or_null<DenseI64ArrayAttr>(attrs[0]);
   DenseI64ArrayAttr mappingArray =
-      dyn_cast_or_null<DenseI64ArrayAttr>(attrs[0]);
+      dyn_cast_or_null<DenseI64ArrayAttr>(attrs[1]);
 
   if (!basisArray || !mappingArray) {
     return failure();
