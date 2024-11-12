@@ -37,8 +37,12 @@ static void setOpSignature(Operation *op, VectorLayoutAnalysis &analysis) {
 
   for (Value operand : op->getOperands()) {
     if (auto vectorOperand = dyn_cast<VectorValue>(operand)) {
-      operands.push_back(
-          analysis.getLayout<VectorLayoutInterface>(vectorOperand));
+      auto layout = analysis.getLayout<VectorLayoutInterface>(vectorOperand);
+      if (!layout && vectorOperand.getType().getRank() == 0) {
+        layout =
+            NestedLayoutAttr::get(op->getContext(), {}, {}, {}, {}, {}, {}, {});
+      }
+      operands.push_back(layout);
       continue;
     }
     operands.push_back(UnitAttr::get(op->getContext()));
@@ -46,8 +50,12 @@ static void setOpSignature(Operation *op, VectorLayoutAnalysis &analysis) {
 
   for (Value result : op->getResults()) {
     if (auto vectorResult = dyn_cast<VectorValue>(result)) {
-      results.push_back(
-          analysis.getLayout<VectorLayoutInterface>(vectorResult));
+      auto layout = analysis.getLayout<VectorLayoutInterface>(vectorResult);
+      if (!layout && vectorResult.getType().getRank() == 0) {
+        layout =
+            NestedLayoutAttr::get(op->getContext(), {}, {}, {}, {}, {}, {}, {});
+      }
+      results.push_back(layout);
       continue;
     }
     results.push_back(UnitAttr::get(op->getContext()));
@@ -275,7 +283,8 @@ static bool canDistribute(Operation *op, VectorLayoutAnalysis &analysis) {
   // Check if all operands and results of this operation have a layout.
   return llvm::all_of(values, [&analysis](Value value) {
     auto vectorValue = dyn_cast<VectorValue>(value);
-    return !vectorValue || analysis.getLayout<Attribute>(vectorValue);
+    return !vectorValue || vectorValue.getType().getRank() == 0 ||
+           analysis.getLayout<Attribute>(vectorValue);
   });
 }
 
@@ -301,6 +310,7 @@ LogicalResult distributeVectorOps(Operation *root,
   LLVM_DEBUG(llvm::dbgs() << "Distribution signatures set\n");
   LLVM_DEBUG(root->print(llvm::dbgs()));
   LLVM_DEBUG(llvm::dbgs() << "\n\n");
+  root->dump();
 
   FrozenRewritePatternSet frozenPatterns(std::move(distributionPatterns));
   applyVectorDistribution(root, frozenPatterns);

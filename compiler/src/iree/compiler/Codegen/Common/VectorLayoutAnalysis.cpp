@@ -132,13 +132,6 @@ public:
 private:
   void visitOperation(Operation *op);
 
-  void visitRegionSuccessors(RegionBranchOpInterface branch,
-                             RegionBranchPoint branchPoint,
-                             MutableArrayRef<OpOperand> operands);
-
-  void visitRegionBranchTerminatorOpInterface(RegionBranchOpInterface branch,
-                                              RegionBranchPoint branchPoint);
-
   DistributionLayout *getLatticeElement(Value val);
 
   MLIRContext *ctx;
@@ -162,10 +155,6 @@ public:
 
 private:
   void visitOperation(Operation *op);
-
-  void visitRegionSuccessors(RegionBranchOpInterface branch,
-                             RegionBranchPoint branchPoint,
-                             OperandRange operands);
 
   DistributionLayout *getLatticeElement(Value val);
 
@@ -569,10 +558,103 @@ static void propagateLayoutToGatherOp(
   update(result, changed);
 }
 
+static void propagateLayoutToForOp(
+    scf::ForOp forOp, ArrayRef<const DistributionLayout *> operandLattices,
+    ArrayRef<DistributionLayout *> resultLattices,
+    std::function<void(DistributionLayout *, ChangeResult)> update,
+    const std::function<SmallVector<DistributionLayout *>(ValueRange)>
+        &getLattice) {
+  // Propagate layout from entry operands to results.
+  for (auto [operandLayout, resultLayout] :
+       llvm::zip(operandLattices, resultLattices)) {
+    // If result lattice already has a layout, we cannot do anything. We do not
+    // impose layout conflicts on results.
+    if (resultLayout->hasLayout()) {
+      continue;
+    }
+
+    ChangeResult changed = resultLayout->resolve(operandLayout);
+    update(resultLayout, changed);
+  }
+
+  // Propagate layout from entry operands to loop body block arguments.
+  SmallVector<DistributionLayout *> bodyLattice =
+      getLattice(forOp.getBody()->getArguments());
+  for (auto [operandLayout, argLayout] :
+       llvm::zip(operandLattices, bodyLattice)) {
+    // If result lattice already has a layout, we cannot do anything. We do not
+    // impose layout conflicts on results.
+    if (argLayout->hasLayout()) {
+      continue;
+    }
+
+    ChangeResult changed = argLayout->resolve(operandLayout);
+    update(argLayout, changed);
+  }
+}
+
+static void propagateLayoutToYieldOp(
+    scf::YieldOp yieldOp, ArrayRef<const DistributionLayout *> operandLattices,
+    ArrayRef<DistributionLayout *> resultLattices,
+    std::function<void(DistributionLayout *, ChangeResult)> update,
+    const std::function<SmallVector<DistributionLayout *>(ValueRange)>
+        &getLattice) {
+  // Propagate layout to block arguments of the loop. Ideally we should also
+  // propagate layout to result of the forOp, but we will rely on other
+  // propagation/enforcement to do it for us.
+  auto forOp = yieldOp->getParentOfType<scf::ForOp>();
+  if (!forOp) {
+    return;
+  }
+
+  // Propagate layout from yield operands to loop results.
+  SmallVector<DistributionLayout *> loopResultLattice =
+      getLattice(forOp.getResults());
+  for (auto [operandLayout, loopResult] :
+       llvm::zip(operandLattices, loopResultLattice)) {
+    // If result lattice already has a layout, we cannot do anything. We do not
+    // impose layout conflicts on results.
+    if (loopResult->hasLayout()) {
+      continue;
+    }
+
+    ChangeResult changed = loopResult->resolve(operandLayout);
+    update(loopResult, changed);
+  }
+
+  // Propagate layout from yield operands to block arguments.
+  SmallVector<DistributionLayout *> loopBlockLattice =
+      getLattice(forOp->getBlock()->getArguments());
+  for (auto [operandLayout, blockArg] :
+       llvm::zip(operandLattices, loopBlockLattice)) {
+    // If result lattice already has a layout, we cannot do anything. We do not
+    // impose layout conflicts on results.
+    if (blockArg->hasLayout()) {
+      continue;
+    }
+
+    ChangeResult changed = blockArg->resolve(operandLayout);
+    update(blockArg, changed);
+  }
+}
+
 void propagationTransferFunction(
     Operation *op, ArrayRef<const DistributionLayout *> operandLattices,
     ArrayRef<DistributionLayout *> resultLattices,
-    std::function<void(DistributionLayout *, ChangeResult)> update) {
+    std::function<void(DistributionLayout *, ChangeResult)> update,
+    const std::function<SmallVector<DistributionLayout *>(ValueRange)>
+        &getLattice) {
+
+  llvm::errs() << "propagating layout on : " << op->getName() << "\n";
+
+  if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
+    propagateLayoutToYieldOp(yieldOp, operandLattices, resultLattices, update,
+                             getLattice);
+  }
+
+  if (resultLattices.empty()) {
+    return;
+  }
 
   if (auto toLayout = dyn_cast<ToLayoutOp>(op)) {
     propagateLayoutToLayoutOp(toLayout, operandLattices, resultLattices,
@@ -606,6 +688,12 @@ void propagationTransferFunction(
 
   if (auto gather = dyn_cast<vector::GatherOp>(op)) {
     propagateLayoutToGatherOp(gather, operandLattices, resultLattices, update);
+    return;
+  }
+
+  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    propagateLayoutToForOp(forOp, operandLattices, resultLattices, update,
+                           getLattice);
     return;
   }
 
@@ -800,10 +888,30 @@ static void enforceLayoutToGatherOp(
   }
 }
 
+static void enforceLayoutToForOp(
+    scf::ForOp forOp, ArrayRef<DistributionLayout *> operandLattices,
+    ArrayRef<const DistributionLayout *> resultLattices,
+    std::function<void(DistributionLayout *, ChangeResult)> update,
+    const std::function<SmallVector<DistributionLayout *>(ValueRange)>
+        &getLattice) {
+  // Enforce the result layout on operands.
+  for (auto [index, operandLayout, resultLayout] :
+       llvm::enumerate(operandLattices, resultLattices)) {
+    ChangeResult changed = operandLayout->resolveWithPossibleConflict(
+        resultLayout, getOpOperand(forOp, index));
+    update(operandLayout, changed);
+  }
+}
+
 void enforcementTransferFunction(
     Operation *op, ArrayRef<DistributionLayout *> operandLattices,
     ArrayRef<const DistributionLayout *> resultLattices,
-    std::function<void(DistributionLayout *, ChangeResult)> update) {
+    std::function<void(DistributionLayout *, ChangeResult)> update,
+    const std::function<SmallVector<DistributionLayout *>(ValueRange)>
+        &getLattice) {
+  if (operandLattices.empty()) {
+    return;
+  }
 
   if (auto toLayout = dyn_cast<ToLayoutOp>(op)) {
     enforceLayoutToLayoutOp(toLayout, operandLattices, resultLattices, update);
@@ -843,6 +951,11 @@ void enforcementTransferFunction(
                                  update);
     return;
   }
+
+  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    enforceLayoutToForOp(forOp, operandLattices, resultLattices, update,
+                         getLattice);
+  }
 }
 
 /// ==========================================================================
@@ -878,24 +991,6 @@ LogicalResult PropagateLayout::visit(ProgramPoint *point) {
 }
 
 void PropagateLayout::visitOperation(Operation *op) {
-  // Handle region branching control flow.
-  // TODO: Write more about what we are doing here.
-  if (auto branch = dyn_cast<RegionBranchOpInterface>(op)) {
-    visitRegionSuccessors(branch, RegionBranchPoint::parent(),
-                          branch->getOperands());
-    return;
-  }
-
-  if (auto yield = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
-    if (auto branch = dyn_cast<RegionBranchOpInterface>(yield->getParentOp())) {
-      visitRegionSuccessors(branch, RegionBranchPoint(yield->getParentRegion()),
-                            yield->getOperands());
-      return;
-    }
-  }
-
-  // TODO: Handle BranchOpInterface also.
-
   // Grab the lattice elements of the operands.
   SmallVector<const DistributionLayout *> operandLattices;
   operandLattices.reserve(op->getNumOperands());
@@ -919,53 +1014,24 @@ void PropagateLayout::visitOperation(Operation *op) {
     resultLattices.push_back(resultLattice);
   }
 
-  // Exit early on operations with no results.
-  if (resultLattices.empty()) {
-    return;
-  }
-
   auto changeFunc = [&](DistributionLayout *lattice, ChangeResult changed) {
     this->propagateIfChanged(lattice, changed);
   };
 
-  propagationTransferFunction(op, operandLattices, resultLattices, changeFunc);
-}
-
-void PropagateLayout::visitRegionSuccessors(RegionBranchOpInterface branch,
-                                            RegionBranchPoint branchPoint,
-                                            OperandRange operands) {
-  SmallVector<RegionSuccessor> successors;
-  branch.getSuccessorRegions(branchPoint, successors);
-  for (RegionSuccessor successor : successors) {
-    ValueRange inputs = successor.getSuccessorInputs();
-
-    // Get vector layouts for forwarded operands.
-    SmallVector<const DistributionLayout *> forwardedLattices;
-    for (Value operand : operands) {
-      if (isa<VectorType>(operand.getType())) {
-        forwardedLattices.push_back(getLatticeElement(operand));
+  auto getLattice =
+      [&](ValueRange values) -> SmallVector<DistributionLayout *> {
+    SmallVector<DistributionLayout *> blockLattice;
+    for (Value value : values) {
+      if (!isa<VectorType>(value.getType())) {
+        continue;
       }
+      blockLattice.push_back(getLatticeElement(value));
     }
+    return blockLattice;
+  };
 
-    // Get vector layouts for input operands.
-    SmallVector<DistributionLayout *> inputLattices;
-    for (Value operand : inputs) {
-      if (isa<VectorType>(operand.getType())) {
-        inputLattices.push_back(getLatticeElement(operand));
-      }
-    }
-
-    // Both should have same number of vector operands.
-    assert(forwardedLattices.size() == inputLattices.size() &&
-           "Number of forwarded operands and inputs should match");
-
-    // Propagate the layouts.
-    for (auto [forwardedLattice, inputLattice] :
-         llvm::zip(forwardedLattices, inputLattices)) {
-      ChangeResult changed = inputLattice->resolve(forwardedLattice);
-      propagateIfChanged(inputLattice, changed);
-    }
-  }
+  propagationTransferFunction(op, operandLattices, resultLattices, changeFunc,
+                              getLattice);
 }
 
 DistributionLayout *PropagateLayout::getLatticeElement(Value val) {
@@ -1001,27 +1067,6 @@ LogicalResult EnforceLayout::visit(ProgramPoint *point) {
 }
 
 void EnforceLayout::visitOperation(Operation *op) {
-  // Handle region branching control flow.
-  // TODO: Write more about what we are doing here.
-  if (auto branch = dyn_cast<RegionBranchOpInterface>(op)) {
-    visitRegionSuccessors(branch, RegionBranchPoint::parent(),
-                          branch->getOpOperands());
-
-    // Handle the propagation from scf.for to yield op.
-    visitRegionBranchTerminatorOpInterface(branch, RegionBranchPoint::parent());
-    return;
-  }
-
-  if (auto yield = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
-    if (auto branch = dyn_cast<RegionBranchOpInterface>(yield->getParentOp())) {
-      visitRegionSuccessors(branch, RegionBranchPoint(yield->getParentRegion()),
-                            yield->getOpOperands());
-      return;
-    }
-  }
-
-  // TODO: Handle BranchOpInterface also.
-
   // Grab the lattice elements of the operands.
   SmallVector<DistributionLayout *> operandLattices;
   operandLattices.reserve(op->getNumOperands());
@@ -1032,11 +1077,6 @@ void EnforceLayout::visitOperation(Operation *op) {
 
     DistributionLayout *operandLattice = getLatticeElement(operand);
     operandLattices.push_back(operandLattice);
-  }
-
-  // Exit early on operations with no results.
-  if (operandLattices.empty()) {
-    return;
   }
 
   // Get the result lattices.
@@ -1055,87 +1095,20 @@ void EnforceLayout::visitOperation(Operation *op) {
     this->propagateIfChanged(lattice, changed);
   };
 
-  enforcementTransferFunction(op, operandLattices, resultLattices, changeFunc);
-}
-
-void EnforceLayout::visitRegionSuccessors(RegionBranchOpInterface branch,
-                                          RegionBranchPoint branchPoint,
-                                          MutableArrayRef<OpOperand> operands) {
-  SmallVector<RegionSuccessor> successors;
-  branch.getSuccessorRegions(branchPoint, successors);
-  for (RegionSuccessor successor : successors) {
-    ValueRange inputs = successor.getSuccessorInputs();
-
-    // Get vector layouts for forwarded operands.
-    SmallVector<DistributionLayout *> forwardedLattices;
-    SmallVector<OpOperand *> forwardedOperands;
-    for (OpOperand &use : operands) {
-      Value operand = use.get();
-      if (isa<VectorType>(operand.getType())) {
-        forwardedLattices.push_back(getLatticeElement(operand));
-        forwardedOperands.push_back(&use);
+  auto getLattice =
+      [&](ValueRange values) -> SmallVector<DistributionLayout *> {
+    SmallVector<DistributionLayout *> blockLattice;
+    for (Value value : values) {
+      if (!isa<VectorType>(value.getType())) {
+        continue;
       }
+      blockLattice.push_back(getLatticeElement(value));
     }
+    return blockLattice;
+  };
 
-    // Get vector layouts for input operands.
-    SmallVector<const DistributionLayout *> inputLattices;
-    for (Value operand : inputs) {
-      if (isa<VectorType>(operand.getType())) {
-        inputLattices.push_back(getLatticeElement(operand));
-      }
-    }
-
-    // Both should have same number of vector operands.
-    assert(forwardedLattices.size() == inputLattices.size() &&
-           "Number of forwarded operands and inputs should match");
-
-    // Propagate the layouts.
-    int64_t curr = 0;
-    for (auto [forwardedLattice, inputLattice] :
-         llvm::zip(forwardedLattices, inputLattices)) {
-      ChangeResult changed = forwardedLattice->resolveWithPossibleConflict(
-          inputLattice, *forwardedOperands[curr]);
-      propagateIfChanged(forwardedLattice, changed);
-      curr++;
-    }
-  }
-}
-
-void EnforceLayout::visitRegionBranchTerminatorOpInterface(
-    RegionBranchOpInterface branch, RegionBranchPoint branchPoint) {
-  SmallVector<RegionSuccessor> successors;
-  branch.getSuccessorRegions(branchPoint, successors);
-  if (!branch.hasLoop())
-    return;
-  SmallVector<DistributionLayout *> resultLattices;
-  for (Value result : branch->getResults()) {
-    DistributionLayout *resultLattice = getLatticeElement(result);
-    if (resultLattice->isUninitialized())
-      continue;
-    resultLattices.push_back(resultLattice);
-  }
-
-  // We do not support multiple results yet.
-  if (resultLattices.size() != 1)
-    return;
-
-  for (RegionSuccessor successor : successors) {
-    if (Region *succ = successor.getSuccessor()) {
-      Operation *terminator = succ->back().getTerminator();
-      if (scf::YieldOp yieldOp = dyn_cast<scf::YieldOp>(terminator)) {
-        for (Value operand : yieldOp.getOperands()) {
-          if (!isa<VectorType>(operand.getType())) {
-            continue;
-          }
-          DistributionLayout *forwardLattice = getLatticeElement(operand);
-          ChangeResult changed = forwardLattice->resolve(resultLattices[0]);
-          propagateIfChanged(forwardLattice, changed);
-        }
-      }
-    }
-  }
-
-  return;
+  enforcementTransferFunction(op, operandLattices, resultLattices, changeFunc,
+                              getLattice);
 }
 
 DistributionLayout *EnforceLayout::getLatticeElement(Value val) {
