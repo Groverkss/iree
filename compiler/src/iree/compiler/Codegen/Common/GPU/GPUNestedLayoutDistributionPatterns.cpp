@@ -272,6 +272,14 @@ struct DistributeTransferWrite final
       Value slicedVector = rewriter.create<vector::ExtractOp>(
           writeOp.getLoc(), distributedVector,
           offsetArray.take_front(rank * 2));
+      // TODO: This is honestly a problem with vector.extract semantics, we
+      // shouldn't have to guess the return type.
+      if (!isa<VectorType>(slicedVector.getType())) {
+        slicedVector = rewriter.create<vector::BroadcastOp>(
+            writeOp.getLoc(),
+            VectorType::get({}, getElementTypeOrSelf(slicedVector)),
+            slicedVector);
+      }
       rewriter.create<vector::TransferWriteOp>(
           writeOp.getLoc(), slicedVector, writeOp.getSource(), slicedIndices,
           writeOp.getPermutationMapAttr(), writeOp.getMask(),
