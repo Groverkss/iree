@@ -606,8 +606,6 @@ static LogicalResult setGPULoweringConfigLayout(
       elementTile.value(), getStridesFromBasis(subgroupBasis, subgroupMapping),
       getStridesFromBasis(threadBasis, threadMapping));
 
-  layout.dump();
-
   rewriter.setInsertionPoint(candidate);
   for (OpOperand &operand : candidate->getOpOperands()) {
     VectorLayoutInterface operandLayout =
