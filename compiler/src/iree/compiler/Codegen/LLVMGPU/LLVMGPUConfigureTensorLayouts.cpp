@@ -896,7 +896,9 @@ static LogicalResult setGPULoweringConfigLayout(
   }
 
   if (failed(divideTile(bounds, threadTile))) {
-    candidate->emitError() << "Could not divide bounds over given thread basis";
+    candidate->emitError() << "Could not divide bounds over given thread basis "
+                           << "Bounds: " << bounds
+                           << " Thread Basis: " << threadTile;
     return failure();
   }
 
