@@ -4,7 +4,6 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/compiler/Codegen/Common/GPU/GPUMarkers.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/GPULoweringConfigUtils.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUAttrs.h"
@@ -870,16 +869,16 @@ static LogicalResult setGPULoweringConfigLayout(
       config.getStaticTilingLevelSizes(threadLevel, candidate);
 
   SmallVector<int64_t> subgroupBasis, subgroupMapping;
-  if (failed(gpu_markers::getBasis(config, IREE::GPU::TilingLevel::Subgroup,
-                                   subgroupBasis, subgroupMapping))) {
+  if (failed(getBasis(config, IREE::GPU::TilingLevel::Subgroup, subgroupBasis,
+                      subgroupMapping))) {
     candidate->emitError()
         << "Could not find a subgroup basis from lowering config";
     return failure();
   }
 
   SmallVector<int64_t> threadBasis, threadMapping;
-  if (failed(gpu_markers::getBasis(config, IREE::GPU::TilingLevel::Thread,
-                                   threadBasis, threadMapping))) {
+  if (failed(getBasis(config, IREE::GPU::TilingLevel::Thread, threadBasis,
+                      threadMapping))) {
     candidate->emitError()
         << "Could not find a thread basis from lowering config";
     return failure();
