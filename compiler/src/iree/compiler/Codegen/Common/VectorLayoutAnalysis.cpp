@@ -1006,10 +1006,6 @@ void EnforceLayout::visitOperation(Operation *op) {
   if (auto branch = dyn_cast<RegionBranchOpInterface>(op)) {
     visitRegionSuccessors(branch, RegionBranchPoint::parent(),
                           branch->getOpOperands());
-
-    // Handle the propagation from scf.for to yield op.
-    visitRegionBranchTerminatorOpInterface(branch, RegionBranchPoint::parent());
-    return;
   }
 
   if (auto yield = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {

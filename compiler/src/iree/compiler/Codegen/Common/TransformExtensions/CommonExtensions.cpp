@@ -1100,6 +1100,10 @@ class TestVectorLayoutOptions : public VectorLayoutOptions {
 public:
   TestVectorLayoutOptions(Operation *root)
       : VectorLayoutOptions(root, /*fullConversion=*/false) {}
+
+  VectorLayoutInterface getUndistributedLayout(VectorType type) const override {
+    return VectorLayoutInterface();
+  }
 };
 
 DiagnosedSilenceableFailure

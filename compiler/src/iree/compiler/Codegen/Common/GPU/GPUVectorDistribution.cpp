@@ -31,14 +31,18 @@ constexpr StringLiteral kVectorLayoutFetcherStorageAttrName =
 constexpr StringLiteral kVectorLayoutRedistributeAttrName =
     "__vector_layout_redistribute";
 
-static void setOpSignature(Operation *op, VectorLayoutAnalysis &analysis) {
+static void setOpSignature(Operation *op, VectorLayoutAnalysis &analysis,
+                           const VectorLayoutOptions &options) {
   SmallVector<Attribute> operands;
   SmallVector<Attribute> results;
 
   for (Value operand : op->getOperands()) {
     if (auto vectorOperand = dyn_cast<VectorValue>(operand)) {
-      operands.push_back(
-          analysis.getLayout<VectorLayoutInterface>(vectorOperand));
+      auto layout = analysis.getLayout<VectorLayoutInterface>(vectorOperand);
+      if (!layout) {
+        layout = options.getUndistributedLayout(vectorOperand.getType());
+      }
+      operands.push_back(layout);
       continue;
     }
     operands.push_back(UnitAttr::get(op->getContext()));
@@ -46,8 +50,11 @@ static void setOpSignature(Operation *op, VectorLayoutAnalysis &analysis) {
 
   for (Value result : op->getResults()) {
     if (auto vectorResult = dyn_cast<VectorValue>(result)) {
-      results.push_back(
-          analysis.getLayout<VectorLayoutInterface>(vectorResult));
+      auto layout = analysis.getLayout<VectorLayoutInterface>(vectorResult);
+      if (!layout) {
+        layout = options.getUndistributedLayout(vectorResult.getType());
+      }
+      results.push_back(layout);
       continue;
     }
     results.push_back(UnitAttr::get(op->getContext()));
@@ -264,21 +271,6 @@ static void applyVectorDistribution(Operation *root,
   }
 }
 
-static bool canDistribute(Operation *op, VectorLayoutAnalysis &analysis) {
-  auto values = llvm::to_vector_of<Value>(op->getOperands());
-  llvm::append_range(values, op->getResults());
-
-  // First check if any of them are vector values.
-  if (llvm::none_of(values, llvm::IsaPred<VectorValue>))
-    return false;
-
-  // Check if all operands and results of this operation have a layout.
-  return llvm::all_of(values, [&analysis](Value value) {
-    auto vectorValue = dyn_cast<VectorValue>(value);
-    return !vectorValue || analysis.getLayout<Attribute>(vectorValue);
-  });
-}
-
 LogicalResult distributeVectorOps(Operation *root,
                                   RewritePatternSet &distributionPatterns,
                                   VectorLayoutOptions &options) {
@@ -293,11 +285,7 @@ LogicalResult distributeVectorOps(Operation *root,
   // Go to each operation, and set its distribution signature.
   LLVM_DEBUG(
       llvm::dbgs() << "Setting distribution signatures for operations\n");
-  root->walk([&](Operation *op) {
-    if (canDistribute(op, analysis)) {
-      setOpSignature(op, analysis);
-    }
-  });
+  root->walk([&](Operation *op) { setOpSignature(op, analysis, options); });
   LLVM_DEBUG(llvm::dbgs() << "Distribution signatures set\n");
   LLVM_DEBUG(root->print(llvm::dbgs()));
   LLVM_DEBUG(llvm::dbgs() << "\n\n");

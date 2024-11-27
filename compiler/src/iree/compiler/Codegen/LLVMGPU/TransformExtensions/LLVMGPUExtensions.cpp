@@ -1463,6 +1463,10 @@ class TransformVectorLayoutOptions : public VectorLayoutOptions {
 public:
   TransformVectorLayoutOptions(Operation *root, bool fullConversion)
       : VectorLayoutOptions(root, fullConversion) {}
+
+  VectorLayoutInterface getUndistributedLayout(VectorType type) const override {
+    return VectorLayoutInterface();
+  }
 };
 
 DiagnosedSilenceableFailure
