@@ -443,10 +443,11 @@ struct DistributeMultiReduction final
 
     Type elemTy = srcVector.getType().getElementType();
     unsigned elemBitwidth = elemTy.getIntOrFloatBitWidth();
-    if (elemBitwidth != maxBitsPerShuffle) {
+    if (elemBitwidth > maxBitsPerShuffle) {
       return rewriter.notifyMatchFailure(
-          multiReduceOp, llvm::formatv("unimplemented: packed shuffle",
-                                       elemBitwidth, maxBitsPerShuffle));
+          multiReduceOp,
+          llvm::formatv("element bitwidth greater than maxBitsPerShuffle",
+                        elemBitwidth, maxBitsPerShuffle));
     }
 
     VectorValue disSrc =
