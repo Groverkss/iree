@@ -405,9 +405,11 @@ SmallVector<VirtualMMAIntrinsic> MMAAttr::getVirtualIntrinsics() const {
   case MMAIntrinsic::MFMA_F32_32x32x8_F16:
     return {VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16};
   case MMAIntrinsic::MFMA_F32_16x16x32_F8E4M3FNUZ:
-    return {VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ};
+    return {VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ,
+            VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ};
   case MMAIntrinsic::MFMA_F32_32x32x16_F8E4M3FNUZ:
-    return {VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ};
+    return {VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ,
+            VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ};
   default:
     return {};
   }
@@ -866,6 +868,10 @@ getMNKShape(VirtualMMAIntrinsic type) {
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16:
     return {32, 32, 16};
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+    return {16, 16, 64};
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ:
+    return {32, 32, 32};
   }
   assert(false && "unhandled virtual mma layout type.");
   return {};
@@ -879,8 +885,9 @@ getABCElementTypes(MLIRContext *context, VirtualMMAIntrinsic type) {
 
   switch (type) {
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ:
-    return {f8E4M3FNUZ, f8E4M3FNUZ, f32};
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ:
     return {f8E4M3FNUZ, f8E4M3FNUZ, f32};
   // V(Virtual)MFMA instructions which have 2 mfma instructions interleaved
   // along the k dimension.
@@ -932,7 +939,9 @@ int64_t VirtualMMAAttr::getSubgroupSize() const {
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F16:
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ:
-  case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16: {
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16:
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ: {
     return 64;
   }
   }
@@ -968,7 +977,9 @@ LogicalResult VirtualMMAAttr::populateOperandOffsetsSizesStrides(
 int64_t VirtualMMAAttr::getIntrinsicsK() const {
   switch (getIntrinsic()) {
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F16:
-  case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16: {
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F16:
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ: {
     return 2;
   }
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ:
@@ -997,6 +1008,8 @@ FailureOr<Value> VirtualMMAAttr::buildMmaOperation(OpBuilder &builder,
     return failure();
   }
   switch (getIntrinsic()) {
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F16:
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ:
@@ -1036,6 +1049,8 @@ FailureOr<Value> VirtualMMAAttr::buildMmaOperation(OpBuilder &builder,
 
 int64_t VirtualMMAAttr::getBlockSize() const {
   switch (getIntrinsic()) {
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F8E4M3FNUZ:
   case VirtualMMAIntrinsic::VMFMA_F32_16x16x32_F16:
   case VirtualMMAIntrinsic::VMFMA_F32_32x32x16_F8E4M3FNUZ:
@@ -1094,6 +1109,30 @@ MMASingleSubgroupLayout getSingleSubgroupLayout(VirtualMMAIntrinsic intrinsic,
     case MMAFragment::Rhs:
       return {/*outer=*/{2, 1}, /*thread=*/{2, 32}, /*tstrides=*/{32, 1},
               /*element=*/{4, 1}};
+    case MMAFragment::Acc:
+      return {/*outer=*/{4, 1}, /*thread=*/{2, 32}, /*tstrides=*/{32, 1},
+              /*element=*/{4, 1}};
+    }
+  case VirtualMMAIntrinsic::VMFMA_F32_16x16x64_F8E4M3FNUZ:
+    switch (fragment) {
+    case MMAFragment::Lhs:
+      return {/*outer=*/{1, 1}, /*thread=*/{16, 4}, /*tstrides=*/{1, 16},
+              /*element=*/{1, 16}};
+    case MMAFragment::Rhs:
+      return {/*outer=*/{1, 1}, /*thread=*/{4, 16}, /*tstrides=*/{16, 1},
+              /*element=*/{16, 1}};
+    case MMAFragment::Acc:
+      return {/*outer=*/{1, 1}, /*thread=*/{4, 16}, /*tstrides=*/{16, 1},
+              /*element=*/{4, 1}};
+    }
+  case VirtualMMAIntrinsic::VMFMA_F32_32x32x32_F8E4M3FNUZ:
+    switch (fragment) {
+    case MMAFragment::Lhs:
+      return {/*outer=*/{1, 1}, /*thread=*/{32, 2}, /*tstrides=*/{1, 32},
+              /*element=*/{1, 16}};
+    case MMAFragment::Rhs:
+      return {/*outer=*/{1, 1}, /*thread=*/{2, 32}, /*tstrides=*/{32, 1},
+              /*element=*/{16, 1}};
     case MMAFragment::Acc:
       return {/*outer=*/{4, 1}, /*thread=*/{2, 32}, /*tstrides=*/{32, 1},
               /*element=*/{4, 1}};
