@@ -35,6 +35,7 @@ iree_cc_library(
     "DecomposeWinogradPass.cpp"
     "PadContractionToBlockSize.cpp"
     "Passes.cpp"
+    "RaiseSpecialOps.cpp"
     "ReshapeFusion.cpp"
     "SplitReduction.cpp"
     "TileAttention.cpp"

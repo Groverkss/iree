@@ -539,6 +539,21 @@ void moveLoopInvariantCodeFromGuaranteedLoops(Operation *target) {
 
     moveLoopInvariantCode(loopLike);
   });
+
+  // linalg.generic operations are also loop-like, but they don't have
+  // LoopLikeOpInterface implemented for them yet.
+  target->walk([&](linalg::GenericOp genericOp) {
+    moveLoopInvariantCode(
+        &genericOp.getBodyRegion(),
+        [&](Value value, Region *) {
+          return !genericOp->isAncestor(value.getParentRegion()->getParentOp());
+        },
+        [&](Operation *op, Region *) {
+          return !isa<linalg::IndexOp>(op) && isMemoryEffectFree(op) &&
+                 isSpeculatable(op);
+        },
+        [&](Operation *op, Region *) { op->moveBefore(genericOp); });
+  });
 }
 
 //===---------------------------------------------------------------------===//

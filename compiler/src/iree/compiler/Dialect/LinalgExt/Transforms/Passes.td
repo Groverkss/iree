@@ -94,4 +94,9 @@ def ConvertAttentionToOnlineAttentionPass :
   let summary = "Converts attention op to online_attention op";
 }
 
+def RaiseSpecialOpsPass :
+    Pass<"iree-linalg-ext-raise-special-ops", ""> {
+  let summary = "Raise linalg.generic ops to their canonical form";
+}
+
 #endif  // IREE_DIALECT_LINALGEXT_PASSES

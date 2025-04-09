@@ -46,4 +46,6 @@ collapseOpIterationDims(AttentionOp op,
                         ArrayRef<ReassociationIndices> foldedIterationDims,
                         RewriterBase &rewriter);
 
+void populateTensorExtractToInputRaisingPatterns(RewritePatternSet &patterns);
+
 }; // namespace mlir::iree_compiler::IREE::LinalgExt

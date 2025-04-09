@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "iree/compiler/Codegen/Common/Passes.h"
+#include "iree/compiler/Codegen/Transforms/Transforms.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Hoisting.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -287,7 +288,7 @@ void OptimizeTensorInsertExtractSlicesPass::runOnOperation() {
     extractSliceOp->moveAfter(latestInsertionPoint);
   });
 
-  funcOp.walk([&](scf::ForOp forOp) { moveLoopInvariantCode(forOp); });
+  moveLoopInvariantCodeFromGuaranteedLoops(funcOp);
   LDBG("after hoisting loop invariant code\n" << funcOp);
 
   // TODO: walking in some reverse / inside-out order would be more efficient
