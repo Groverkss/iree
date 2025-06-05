@@ -287,6 +287,15 @@ static bool hasReductionIterator(linalg::LinalgOp &op) {
          llvm::any_of(op.getIteratorTypesArray(), linalg::isReductionIterator);
 }
 
+static Type getLoadElementType(Value val) {
+  if (auto defOp = val.getDefiningOp<linalg::GenericOp>()) {
+    if (IREE::LinalgExt::isBitExtendOp(defOp)) {
+      return getElementTypeOrSelf(defOp.getDpsInputOperand(0)->get());
+    }
+  }
+  return getElementTypeOrSelf(val);
+}
+
 /// The bitwidth of the init and src operands is used to determine the
 /// bitwidth of the operation. The bitwidth is minimum of the init and src
 /// operands.
@@ -296,17 +305,8 @@ static FailureOr<int64_t> getBitWidth(linalg::LinalgOp op) {
   Value src = op.getDpsInputOperand(0)->get();
   Type srcElemType = getElementTypeOrSelf(src);
 
-  if (auto initOp = init.getDefiningOp<linalg::GenericOp>()) {
-    if (IREE::LinalgExt::isBitExtendOp(initOp)) {
-      initElemType = getElementTypeOrSelf(initOp.getDpsInputs()[0]);
-    }
-  }
-
-  if (auto srcOp = src.getDefiningOp<linalg::GenericOp>()) {
-    if (IREE::LinalgExt::isBitExtendOp(srcOp)) {
-      srcElemType = getElementTypeOrSelf(srcOp.getDpsInputs()[0]);
-    }
-  }
+  initElemType = getElementTypeOrSelf(init);
+  srcElemType = getElementTypeOrSelf(src);
 
   if (!initElemType.isIntOrFloat() || !srcElemType.isIntOrFloat()) {
     return failure();
@@ -1671,10 +1671,10 @@ setAttentionVectorDistributionConfig(IREE::GPU::TargetAttr target,
   // V : ... X K2_inner K N
 
   // Make thread tile sizes for K1 and N read 128bits.
-  int64_t keyBitwidth =
-      IREE::Util::getTypeBitWidth(getElementTypeOrSelf(op.getKey().getType()));
+  int64_t keyBitwidth = IREE::Util::getTypeBitWidth(
+      getElementTypeOrSelf(getLoadElementType(op.getKey())));
   int64_t valueBitwidth = IREE::Util::getTypeBitWidth(
-      getElementTypeOrSelf(op.getValue().getType()));
+      getElementTypeOrSelf(getLoadElementType(op.getValue())));
 
   // TODO: Support more exotic bitwidths.
   assert(128 % keyBitwidth == 0);
