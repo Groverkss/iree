@@ -1042,11 +1042,7 @@ struct DistributeMultiReduction final
         loc, unDistributedType, isoRankThreadReduced);
     Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices(unDistributedType.getRank(), c0);
-    SmallVector<bool> inBounds(unDistributedType.getRank(), false);
-    // Insert gpu.barrier to make sure previuos iteration
-    // of batch loop has fully read the subgroup partial
-    // reductions.
-    rewriter.create<gpu::BarrierOp>(loc);
+    SmallVector<bool> inBounds(unDistributedType.getRank(), true);
     auto write = rewriter.create<vector::TransferWriteOp>(
         loc, undistrWrite, alloc, indices, inBounds);
     // Set layouts signature for write.
@@ -1088,10 +1084,6 @@ struct DistributeMultiReduction final
                                     writeOperandsAttr, writeResultsAttr);
     }
 
-    auto ceilToPowerOf2 = [](uint32_t x) {
-      return llvm::isPowerOf2_32(x) ? x : llvm::NextPowerOf2(x);
-    };
-
     // Insert gpu.barrier
     rewriter.create<gpu::BarrierOp>(write.getLoc());
     auto read = rewriter.create<vector::TransferReadOp>(
@@ -1120,15 +1112,18 @@ struct DistributeMultiReduction final
           llvm::to_vector(srcLayout.getThreadStrides());
 
       for (int64_t rDim : reductionDims) {
+        subgroupTileLens[rDim] = 1;
         batchTileLens[rDim] = 1;
         outerTileLens[rDim] = 1;
-        elementTileLens[rDim] = 1;
-        threadStrides[rDim] *= subgroupStrides[rDim];
-        // The size or #lanes needs to be a power of 2.
-        threadTileLens[rDim] = ceilToPowerOf2(subgroupTileLens[rDim]);
-        subgroupStrides[rDim] = 1;
-        subgroupTileLens[rDim] = 1;
+        threadTileLens[rDim] = 1;
+        // the partial reductions that was across subgroups will
+        // will be loaded as element tile. We can revisit if this
+        // need to be something else such as thread tile.
+        elementTileLens[rDim] = srcLayout.getSubgroupTile()[rDim];
+        subgroupStrides[rDim] = 0;
+        threadStrides[rDim] = 0;
       }
+
       subgroupToThreadsLayout = IREE::VectorExt::NestedLayoutAttr::get(
           rewriter.getContext(), subgroupTileLens, batchTileLens, outerTileLens,
           threadTileLens, elementTileLens, subgroupStrides, threadStrides);

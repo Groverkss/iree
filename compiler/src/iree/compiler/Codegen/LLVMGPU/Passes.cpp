@@ -1173,6 +1173,9 @@ static void addLowerToLLVMGPUPasses(OpPassManager &modulePassManager,
 
   FunctionLikeNest funcPassManager(modulePassManager);
   funcPassManager.addPass(createFoldTensorExtractOpPass)
+      .addPass(createLLVMGPUVectorTransferLoweringPass)
+      .addPass(createCanonicalizerPass)
+      .addPass(createCSEPass)
       .addPass(createLLVMGPUVectorLoweringPass)
       .addPass(createExpandGPUOpsPass)
       // Barrier elimination before we reach unstructured control flow.

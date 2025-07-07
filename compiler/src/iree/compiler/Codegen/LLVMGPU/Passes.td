@@ -123,6 +123,11 @@ def LLVMGPUVectorLoweringPass :
   let summary = "Pass to lower Vector ops before conversion to LLVM.";
 }
 
+def LLVMGPUVectorTransferLoweringPass :
+    InterfacePass<"iree-llvmgpu-vector-transfer-lowering", "mlir::FunctionOpInterface"> {
+  let summary = "Pass to lower vector.transfer ops before conversion to LLVM.";
+}
+
 def LLVMGPUVectorToGPUPass :
     InterfacePass<"iree-llvmgpu-vector-to-gpu", "mlir::FunctionOpInterface"> {
   let summary = "Pass to convert vector to gpu.";

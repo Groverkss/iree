@@ -111,6 +111,10 @@ struct LLVMGPUVectorLoweringPass final
           funcOp->getContext());
       vector::populateVectorGatherLoweringPatterns(contractLoweringPatterns);
       vector::populateVectorMaskOpLoweringPatterns(contractLoweringPatterns);
+      vector::CreateMaskOp::getCanonicalizationPatterns(
+          contractLoweringPatterns, &getContext());
+      vector::ConstantMaskOp::getCanonicalizationPatterns(
+          contractLoweringPatterns, &getContext());
       vector::populateVectorShapeCastLoweringPatterns(contractLoweringPatterns);
       vector::populateVectorMultiReductionLoweringPatterns(
           contractLoweringPatterns,
