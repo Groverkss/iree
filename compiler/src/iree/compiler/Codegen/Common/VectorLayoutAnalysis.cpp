@@ -214,7 +214,7 @@ ChangeResult DistributionLayout::resolveWithPossibleConflict(
       llvm::isa_and_nonnull<arith::ConstantOp, vector::StepOp,
                             vector::CreateMaskOp, vector::ConstantMaskOp>(
           opOperand.get().getDefiningOp())) {
-    builder.setInsertionPoint(opOperand.get().getDefiningOp());
+    builder.setInsertionPointAfter(opOperand.get().getDefiningOp());
     Operation *copiedConstOp = builder.clone(*opOperand.get().getDefiningOp());
     Value copiedConst = copiedConstOp->getResult(0);
     DistributionLayout *newConstLayout =
