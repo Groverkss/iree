@@ -374,6 +374,10 @@ def GPUApplyPaddingLevelPass :
               clEnumValN(IREE::GPU::TilingLevel::Reduction, "reduction",
                          "Tile and fuse all annotated ops to serial loops"),
               clEnumValN(IREE::GPU::TilingLevel::PartialReduction, "partial_reduction",
+                         "Tile and fuse all annotated ops to partial reduuction loops"),
+              clEnumValN(IREE::GPU::TilingLevel::Workgroup, "workgroup",
+                         "Tile and fuse all annotated ops to partial reduuction loops"),
+              clEnumValN(IREE::GPU::TilingLevel::Serial, "serial",
                          "Tile and fuse all annotated ops to partial reduuction loops")
            )}]>
   ];

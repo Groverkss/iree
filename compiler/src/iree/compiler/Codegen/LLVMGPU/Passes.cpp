@@ -778,50 +778,28 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(createCSEPass());
   funcPassManager.addPass(createGPUPromoteMatmulOperandsPass());
 
-  // Tile to reduction loops.
-  {
-    GPUApplyTilingLevelPassOptions options;
-    options.tilingLevel = IREE::GPU::TilingLevel::Reduction;
-    options.allowZeroSlices = true;
-    funcPassManager.addPass(createGPUApplyTilingLevelPass(options));
-    funcPassManager.addPass(affine::createLoopCoalescingPass());
-    funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
-    funcPassManager.addPass(createCSEPass());
-  }
-
-  // Tile to reduction loops.
-  {
+  for (auto level : {IREE::GPU::TilingLevel::Reduction,
+                     IREE::GPU::TilingLevel::PartialReduction,
+                     IREE::GPU::TilingLevel::Serial}) {
     GPUApplyPaddingLevelPassOptions padOptions;
-    padOptions.tilingLevel = IREE::GPU::TilingLevel::PartialReduction;
+    padOptions.tilingLevel = level;
     funcPassManager.addPass(createGPUApplyPaddingLevelPass(padOptions));
     GPUApplyTilingLevelPassOptions options;
-    options.tilingLevel = IREE::GPU::TilingLevel::PartialReduction;
+    options.tilingLevel = level;
     options.allowZeroSlices = true;
     funcPassManager.addPass(createGPUApplyTilingLevelPass(options));
-    funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
-    funcPassManager.addPass(createCSEPass());
-    // Post tiling, the tensor.pad multiples can be simplified to static
-    // sizes, run dim simplification to infer and propagate these sizes.
-    funcPassManager.addPass(memref::createResolveShapedTypeResultDimsPass());
-    funcPassManager.addPass(affine::createSimplifyAffineMinMaxPass());
-    funcPassManager.addPass(memref::createReifyResultShapesPass());
-    funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
-    funcPassManager.addPass(createCSEPass());
     funcPassManager.addPass(affine::createLoopCoalescingPass());
     funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
     funcPassManager.addPass(createCSEPass());
   }
 
-  // Tile to serial loops.
-  {
-    GPUApplyTilingLevelPassOptions options;
-    options.tilingLevel = IREE::GPU::TilingLevel::Serial;
-    options.allowZeroSlices = true;
-    funcPassManager.addPass(createGPUApplyTilingLevelPass(options));
-    funcPassManager.addPass(affine::createLoopCoalescingPass());
-    funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
-    funcPassManager.addPass(createCSEPass());
-  }
+  // Post tiling, the tensor.pad multiples can be simplified to static
+  // sizes, run dim simplification to infer and propagate these sizes.
+  funcPassManager.addPass(memref::createResolveShapedTypeResultDimsPass());
+  funcPassManager.addPass(affine::createSimplifyAffineMinMaxPass());
+  funcPassManager.addPass(memref::createReifyResultShapesPass());
+  funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
+  funcPassManager.addPass(createCSEPass());
 
   funcPassManager.addPass(IREE::LinalgExt::createDecomposeAttentionPass());
   funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
