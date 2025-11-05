@@ -2622,6 +2622,20 @@ Im2colOp::reifyResultShapes(OpBuilder &b,
 }
 
 //===---------------------------------------------------------------------===//
+// UnMask Op
+//===---------------------------------------------------------------------===//
+
+OpFoldResult UnMaskOp::fold(FoldAdaptor adaptor) {
+  RankedTensorType srcType = getSrc().getType();
+  RankedTensorType dstType = getDest().getType();
+  if (srcType.hasStaticShape() && dstType.hasStaticShape() &&
+      srcType == dstType) {
+    return getSrc();
+  }
+  return OpFoldResult();
+}
+
+//===---------------------------------------------------------------------===//
 // Custom Op
 //===---------------------------------------------------------------------===//
 
