@@ -1171,6 +1171,8 @@ private:
   linalg::ControlDropUnitDims options;
 };
 
+struct DropUnMaskUnitDims final : public OpRewritePattern<MapScatterOp> {};
+
 void populateFoldUnitExtentDimsPatterns(
     RewritePatternSet &patterns, const linalg::ControlDropUnitDims &options) {
   patterns.add<DropScatterUnitIndexDepth>(patterns.getContext());
