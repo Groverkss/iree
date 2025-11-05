@@ -41,9 +41,26 @@ maskTilingInterfaceOp(OpBuilder &b, Operation *op,
           .setPaddingSizes(padMultiples)
           .setPaddingValues(padValues)
           .setPadToMultipleOf(true);
-
   FailureOr<linalg::PadTilingInterfaceResult> result =
       linalg::rewriteAsPaddedOp(b, tilingInterfaceOp, options);
+  if (failed(result)) {
+    return failure();
+  }
+  // Mask out the result by introducing a unmask op, instead of the
+  // tensor.extract_slice that would normally be created.
+  auto dpsOp = cast<DestinationStyleOpInterface>(op);
+  SmallVector<Value> replacements;
+  for (auto [paddedResult, result] :
+       llvm::zip_equal(result->paddedOp->getResults(), op->getResults())) {
+    Value replacement = paddedResult;
+    if (isa<RankedTensorType>(result.getType())) {
+      replacement = IREE::LinalgExt::UnMaskOp::create(
+          b, op->getLoc(), result.getType(), paddedResult,
+          dpsOp.getTiedOpOperand(result)->get());
+    }
+    replacements.push_back(replacement);
+  }
+  result->replacements = replacements;
   return result;
 }
 
