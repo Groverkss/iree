@@ -787,15 +787,19 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
   funcPassManager.addPass(createCSEPass());
 
-  // Convert convolutions to matmul by tiling filter dimensions.
+  // Decompose fused gemms and pack ops to intrinsics before setting layouts.
+  funcPassManager.addPass(createDecomposeHorizontallyFusedGemmsPass());
   funcPassManager.addPass(createGPUTileAndConvertConvToMatmulPass());
+  funcPassManager.addPass(createGPUPackToIntrinsicsPass());
+  funcPassManager.addPass(createConfigTrackingCanonicalizerPass());
+  funcPassManager.addPass(createCSEPass());
 
   // Set anchors at tensor level for vector distribution later and hoist out
   // loop invariant anchors.
-  funcPassManager.addPass(createDecomposeHorizontallyFusedGemmsPass());
   funcPassManager.addPass(createLLVMGPUConfigureTensorLayoutsPass());
   funcPassManager.addPass(createIREELoopInvariantCodeMotionPass());
 
+  // Pre vectorization cleanup.
   funcPassManager.addPass(createCanonicalizerPass());
   funcPassManager.addPass(createCSEPass());
   funcPassManager.addPass(createOptimizeTensorInsertExtractSlicesPass());
@@ -803,6 +807,7 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   // Linalg -> Vector
   funcPassManager.addPass(
       IREE::LinalgExt::createVectorizeIREELinalgExtOpsPass());
+  funcPassManager.addPass(IREE::GPU::createVectorizeIREEGPUOpsPass());
   addGPUVectorizationPasses(funcPassManager, /*vectorizeCopies=*/true,
                             /*enableMasking=*/true);
 

@@ -6,6 +6,7 @@
 
 #include "compiler/src/iree/compiler/Codegen/LLVMGPU/Utils/LLVMGPUUtils.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/GPULoweringConfigUtils.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUAttrs.h"
 #include "iree/compiler/Codegen/Dialect/VectorExt/IR/VectorExtDialect.h"
@@ -245,72 +246,112 @@ getContractionLayout(Operation *candidate, ArrayRef<int64_t> bounds,
   return ContractionLayout{lhs, rhs, acc};
 }
 
-SmallVector<int64_t> getIterationSpaceBounds(linalg::LinalgOp linalgOp) {
-  SmallVector<int64_t> bounds = linalgOp.getStaticLoopRanges();
-  std::optional<VectorizationTileSizes> sizes =
-      inferSizesFromIR(linalgOp, std::nullopt);
-  // Even though the opShape could be dynamic, we could potentially
-  // infer the vector shape
-  if (sizes.has_value()) {
-    bounds = sizes.value().vectorSizes;
+static FailureOr<SmallVector<VectorLayoutInterface>>
+getInnerTiledOperandLayouts(IREE::Codegen::InnerTiledOp tiledOp) {
+  auto config = getLoweringConfig<IREE::GPU::LoweringConfigAttr>(tiledOp);
+  if (!config) {
+    return failure();
   }
-  return bounds;
+
+  SmallVector<int64_t> bounds;
+  tiledOp.getIterationBounds(bounds);
+  SmallVector<int64_t> subgroupCounts, subgroupStrides;
+  if (failed(distributeTilingSizes(tiledOp, config,
+                                   IREE::GPU::TilingLevel::Subgroup, bounds,
+                                   subgroupCounts, subgroupStrides))) {
+    return failure();
+  }
+
+  auto getFragmentLayout = [&](AffineMap operandMap,
+                               int operandIndex) -> VectorLayoutInterface {
+    MMASingleSubgroupLayout subgroupLayout =
+        IREE::GPU::getSingleSubgroupLayout(tiledOp.getKind(), operandIndex);
+    if (std::optional<ArrayAttr> perm = tiledOp.getPermutations()) {
+      // Apply permutation if the tiled op has one.
+      auto innerPermute = cast<DenseI64ArrayAttr>(perm.value()[operandIndex]);
+      applyPermutation(subgroupLayout.outer, innerPermute.asArrayRef());
+      applyPermutation(subgroupLayout.thread, innerPermute.asArrayRef());
+      applyPermutation(subgroupLayout.tstrides, innerPermute.asArrayRef());
+      applyPermutation(subgroupLayout.element, innerPermute.asArrayRef());
+    }
+    // Create the batch/subgroup layout for outer dimensions and the
+    // outer/thread/element layout for the inner dimensions, and combine it.
+    SmallVector<int64_t> operandBatchCounts =
+        applyPermutationMap(operandMap, ArrayRef(bounds));
+    SmallVector<int64_t> operandSgCounts =
+        applyPermutationMap(operandMap, ArrayRef(subgroupCounts));
+    SmallVector<int64_t> operandSgStrides =
+        applyPermutationMap(operandMap, ArrayRef(subgroupStrides));
+    int64_t innerRank = subgroupLayout.element.size();
+    int64_t outerRank = operandBatchCounts.size();
+    // Outer dims layout.
+    operandBatchCounts.append(innerRank, 1);
+    operandSgCounts.append(innerRank, 1);
+    operandSgStrides.append(innerRank, 0);
+    // Inner dims layout.
+    SmallVector<int64_t> outerCounts(outerRank, 1);
+    SmallVector<int64_t> threadCounts(outerRank, 1);
+    SmallVector<int64_t> threadStrides(outerRank, 0);
+    SmallVector<int64_t> elementCounts(outerRank, 1);
+    outerCounts.append(subgroupLayout.outer);
+    threadCounts.append(subgroupLayout.thread);
+    threadStrides.append(subgroupLayout.tstrides);
+    elementCounts.append(subgroupLayout.element);
+
+    {
+      llvm::interleaveComma(operandBatchCounts, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(operandSgCounts, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(outerCounts, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(threadCounts, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(elementCounts, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(operandSgStrides, llvm::errs());
+      llvm::errs() << "\n";
+      llvm::interleaveComma(threadStrides, llvm::errs());
+      llvm::errs() << "\n---\n";
+    }
+
+    auto fragmentSpaceLayout = NestedLayoutAttr::get(
+        tiledOp.getContext(), operandSgCounts, operandBatchCounts, outerCounts,
+        threadCounts, elementCounts, operandSgStrides, threadStrides);
+    return fragmentSpaceLayout;
+  };
+
+  SmallVector<VectorLayoutInterface> layouts;
+  for (auto [idx, operandMap] :
+       llvm::enumerate(tiledOp.getIndexingMapsArray())) {
+    layouts.push_back(getFragmentLayout(operandMap, idx));
+  }
+  return layouts;
 }
 
-static LogicalResult
-setContractionAnchor(IREE::Codegen::InnerTileDescAttrInterface intrinsic,
-                     SmallVector<bool> promotedOperands, RewriterBase &rewriter,
-                     linalg::LinalgOp contract) {
-  // This function should have only be called on a contraction op.
-  assert(linalg::isaContractionOpInterface(contract) &&
-         "cannot set contraction anchor on non contraction op");
-
-  SmallVector<int64_t> bounds = getIterationSpaceBounds(contract);
-  auto layouts =
-      getContractionLayout(contract, bounds, contract.getIndexingMapsArray());
+static LogicalResult setInnerTiledAnchor(IREE::Codegen::InnerTiledOp tiledOp,
+                                         SmallVector<bool> promotedOperands,
+                                         RewriterBase &rewriter) {
+  FailureOr<SmallVector<VectorLayoutInterface>> layouts =
+      getInnerTiledOperandLayouts(tiledOp);
   if (failed(layouts)) {
-    return contract->emitError("cannot get concrete layout for contraction");
+    return failure();
   }
-
-  auto [aLayout, bLayout, cLayout] = *layouts;
-  Location loc = contract.getLoc();
-
-  Value lhs = contract->getOperand(0);
-  Value rhs = contract->getOperand(1);
-  Value acc = contract->getOperand(2);
-
-  // Set layouts for lhs, rhs and acc.
-  rewriter.setInsertionPoint(contract);
-  auto layoutedLhs = ToLayoutOp::create(rewriter, loc, lhs, aLayout, intrinsic);
-  auto layoutedRhs = ToLayoutOp::create(rewriter, loc, rhs, bLayout, intrinsic);
-  auto layoutedAcc = ToLayoutOp::create(rewriter, loc, acc, cLayout, intrinsic);
-
-  // Promote matmul lhs and rhs.
-  // TODO: This is a hack until layout analysis is improved. The layout analysis
-  // should decide where to put these shared memory conversions.
-  if (promotedOperands[0]) {
-    layoutedLhs.setSharedMemoryConversion(true);
+  Location loc = tiledOp.getLoc();
+  for (auto [idx, layout] : llvm::enumerate(layouts.value())) {
+    if (!layout) {
+      continue;
+    }
+    Value operand = tiledOp->getOperand(idx);
+    rewriter.setInsertionPoint(tiledOp);
+    auto layoutedOperand = ToLayoutOp::create(
+        rewriter, loc, operand, layout, getIntrinsic(tiledOp.getOperation()));
+    // Promote operand if needed.
+    if (promotedOperands[idx]) {
+      layoutedOperand.setSharedMemoryConversion(true);
+    }
+    tiledOp->setOperand(idx, layoutedOperand.getResult());
   }
-
-  if (promotedOperands[1]) {
-    layoutedRhs.setSharedMemoryConversion(true);
-  }
-
-  if (promotedOperands[2]) {
-    layoutedAcc.setSharedMemoryConversion(true);
-  }
-
-  contract->setOperand(0, layoutedLhs.getResult());
-  contract->setOperand(1, layoutedRhs.getResult());
-  contract->setOperand(2, layoutedAcc.getResult());
-
-  // Set layout for result.
-  rewriter.setInsertionPointAfter(contract);
-  auto toLayout = ToLayoutOp::create(rewriter, loc, contract->getResult(0),
-                                     cLayout, intrinsic);
-  rewriter.replaceAllUsesExcept(contract->getResult(0), toLayout.getResult(),
-                                toLayout);
-
   return success();
 }
 
@@ -432,14 +473,15 @@ static LogicalResult setAttentionMatmulAnchor(RewriterBase &rewriter,
     std::swap(promotedQKOperands[0], promotedQKOperands[1]);
     std::swap(promotedPVOperands[0], promotedPVOperands[1]);
   }
+  return failure();
 
-  if (failed(setContractionAnchor(qkIntrinsic, promotedQKOperands, rewriter,
-                                  qkMatmul))) {
-    return failure();
-  }
+  // if (failed(setContractionAnchor(qkIntrinsic, promotedQKOperands, rewriter,
+  //                                 qkMatmul))) {
+  //   return failure();
+  // }
 
-  return setContractionAnchor(pvIntrinsic, promotedPVOperands, rewriter,
-                              pvMatmul);
+  // return setContractionAnchor(pvIntrinsic, promotedPVOperands, rewriter,
+  //                             pvMatmul);
 }
 
 static LogicalResult setDerivedThreadConfigLayout(
@@ -526,33 +568,17 @@ static LogicalResult setDerivedThreadConfigLayout(
   return success();
 }
 
-static LogicalResult setIntrinsicLoweringConfigLayout(
-    IREE::GPU::LoweringConfigAttr config, linalg::LinalgOp candidate,
-    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter) {
-
-  SmallVector<bool> promotedOperands = getPromotedOperands(candidate);
-  IREE::Codegen::InnerTileDescAttrInterface intrinsic = getIntrinsic(candidate);
-
-  if (linalg::isaContractionOpInterface(candidate)) {
-    if (succeeded(setContractionAnchor(intrinsic, promotedOperands, rewriter,
-                                       candidate))) {
-      return success();
-    }
-  }
-
-  candidate->emitError() << "Unable to set intrinsic layouts on operation "
-                            "based on given lowering config: "
-                         << config;
-  return failure();
-}
-
 static LogicalResult setGPULoweringConfigLayout(
     IREE::GPU::LoweringConfigAttr config, linalg::LinalgOp candidate,
     ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter) {
   MLIRContext *context = config.getContext();
   Location loc = candidate.getLoc();
 
-  SmallVector<int64_t> bounds = getIterationSpaceBounds(candidate);
+  SmallVector<int64_t> bounds(candidate.getStaticLoopRanges());
+  if (ShapedType::isDynamicShape(bounds)) {
+    return candidate->emitError()
+           << "Cannot set layouts on a dynamically shaped iteration space";
+  }
 
   // Subgroup distribution layouts.
   SmallVector<int64_t> subgroupSizes, subgroupStrides;
@@ -683,12 +709,24 @@ struct LLVMGPUConfigureTensorLayoutsPass final
   LogicalResult setLayoutsFromLoweringConfig(FunctionOpInterface funcOp,
                                              ArrayRef<int64_t> workgroupSize,
                                              RewriterBase &rewriter) {
+    SmallVector<IREE::Codegen::InnerTiledOp> innerTiledCandidates;
     SmallVector<linalg::LinalgOp> candidates;
-    funcOp->walk([&](linalg::LinalgOp op) {
+    funcOp->walk([&](Operation *op) {
       if (getLoweringConfig(op)) {
-        candidates.push_back(op);
+        if (auto innerTiledOp = dyn_cast<IREE::Codegen::InnerTiledOp>(op)) {
+          innerTiledCandidates.push_back(innerTiledOp);
+        } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+          candidates.push_back(linalgOp);
+        }
       }
     });
+
+    for (IREE::Codegen::InnerTiledOp candidate : innerTiledCandidates) {
+      if (failed(setInnerTiledAnchor(candidate, getPromotedOperands(candidate),
+                                     rewriter))) {
+        return failure();
+      }
+    }
 
     for (linalg::LinalgOp candidate : candidates) {
       // Skip attention candidates.
@@ -705,10 +743,6 @@ struct LLVMGPUConfigureTensorLayoutsPass final
                                                     workgroupSize, rewriter);
               })
               .Case([&](IREE::GPU::LoweringConfigAttr config) {
-                if (getMmaKind(config)) {
-                  return setIntrinsicLoweringConfigLayout(
-                      config, candidate, workgroupSize, rewriter);
-                }
                 return setGPULoweringConfigLayout(config, candidate,
                                                   workgroupSize, rewriter);
               })
