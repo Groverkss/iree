@@ -185,6 +185,13 @@ void LayoutInfo::propagateLayoutForward(Value val) {
       setLayoutOrClone(&mask, layout.apply(maskMap));
       continue;
     }
+
+    if (auto shapecast = dyn_cast<vector::ShapeCastOp>(user)) {
+      setLayoutIfUnset(
+          shapecast.getResult(),
+          layout.reshape(shapecast.getResultVectorType().getShape()));
+      continue;
+    }
   }
 }
 
@@ -290,10 +297,21 @@ void LayoutInfo::propagateLayoutBackward(Value val) {
     }
     return;
   }
+
+  if (auto shapecast = dyn_cast<vector::ShapeCastOp>(defOp)) {
+    setLayoutOrClone(
+        &shapecast.getSourceMutable(),
+        layout.reshape(shapecast.getSourceVectorType().getShape()));
+    return;
+  }
 }
 
 void LayoutInfo::setLayoutOrClone(OpOperand *val,
                                   VectorLayoutInterface layout) {
+  if (!layout) {
+    // No layout to set.
+    return;
+  }
   if (!isa<ShapedType>(val->get().getType())) {
     // Don't set layouts on non-shaped types. This would anyway be an empty
     // layout.
@@ -314,20 +332,20 @@ void LayoutInfo::setLayoutOrClone(OpOperand *val,
       return;
     }
   }
-
   if (!hasLayout(val->get())) {
     layouts[val->get()] = layout;
     forward.push(val->get());
     backward.push(val->get());
     return;
   }
-
-  // Otherwise, create a to_layout op to change the layout.
-  Value v = val->get();
-  Value layourtedV = ToLayoutOp::create(b, v.getLoc(), v, layout);
-  val->set(layourtedV);
-  layouts[layourtedV] = layout;
-  return;
+  if (getLayout(val->get()) != layout) {
+    // If the layouts are not same, create a to_layout op to change the layout.
+    Value v = val->get();
+    Value layoutedV = ToLayoutOp::create(b, v.getLoc(), v, layout);
+    val->set(layoutedV);
+    layouts[layoutedV] = layout;
+    return;
+  }
 }
 
 LogicalResult propagateVectorLayoutInfo(

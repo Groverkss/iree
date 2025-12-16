@@ -42,6 +42,12 @@ def VectorLayoutInterface : AttrInterface<"VectorLayoutInterface"> {
       /*args=*/(ins "::mlir::AffineMap":$map)
     >,
     InterfaceMethod<
+      /*description=*/"Reshape the given layout to the new shape.",
+      /*retTy=*/"VectorLayoutInterface",
+      /*methodName=*/"reshape",
+      /*args=*/(ins "::mlir::ArrayRef<int64_t>":$shape)
+    >,
+    InterfaceMethod<
       /*description=*/"Get the expected undistributed shape for the given vector type.",
       /*retTy=*/"SmallVector<int64_t>",
       /*methodName=*/"getUndistributedShape",

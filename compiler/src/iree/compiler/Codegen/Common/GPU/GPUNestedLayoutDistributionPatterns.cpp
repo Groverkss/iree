@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "iree/compiler/Codegen/Common/GPU/GPUPatterns.h"
 #include "iree/compiler/Codegen/Common/GPU/GPUVectorDistribution.h"
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Dialect/VectorExt/IR/VectorExtDialect.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
@@ -1394,6 +1395,42 @@ struct DistributeMultiReduction final
   int64_t maxBitsPerShuffle;
 };
 
+static SmallVector<AffineMap> getPackedAffineMaps(ArrayRef<AffineMap> maps,
+                                                  MLIRContext *ctx) {
+  // Given that the distribution format is <BATCH x OUTER x ELEMENT>,
+  // the iterations and affine maps need to be replicated three times.
+  SmallVector<AffineMap> newMaps;
+  for (AffineMap map : maps) {
+    int64_t numDims = map.getNumDims();
+    int64_t numResults = map.getNumResults();
+    SmallVector<AffineExpr> exprs;
+    for (int i = 0; i < 3; ++i) {
+      AffineMap shiftedMap = map.shiftDims(i * numDims);
+      for (int j = 0; j < numResults; ++j) {
+        exprs.push_back(shiftedMap.getResult(j));
+      }
+    }
+    AffineMap newMap =
+        AffineMap::get(/*dimCount=*/3 * numDims,
+                       /*symbolCount=*/map.getNumSymbols(), exprs, ctx);
+    newMaps.push_back(newMap);
+  }
+  return newMaps;
+}
+
+static SmallVector<Attribute> getPackedIterators(ArrayRef<Attribute> iterators,
+                                                 MLIRContext *ctx) {
+  // Given that the distribution format is <BATCH x OUTER x ELEMENT>,
+  // the iterations and affine maps need to be replicated three times.
+  SmallVector<Attribute> newIterators;
+  for (int i = 0; i < 3; ++i) {
+    for (Attribute attr : iterators) {
+      newIterators.push_back(attr);
+    }
+  }
+  return newIterators;
+}
+
 /// The distribution of contract is performed by doing a local contraction where
 /// each thread performs operations on its locally distributed elements. Then,
 /// the resulting vector is interpreted in undistributed domain. The said
@@ -1602,36 +1639,14 @@ struct DistributeContract final
     ArrayRef<Attribute> iteratorTypes =
         contractOp.getIteratorTypes().getValue();
 
-    // Given that the distribution format is <BATCH x OUTER x ELEMENT>,
-    // the iterations and affine maps need to be replicated three times.
-
-    SmallVector<Attribute> newIterators;
     // Replicate the iterators for local vector.contract
-    for (int i = 0; i < 3; ++i) {
-      newIterators.append(iteratorTypes.begin(), iteratorTypes.end());
-    }
-
+    SmallVector<Attribute> newIterators =
+        getPackedIterators(iteratorTypes, ctx);
     // Replicate the affine maps for local vector.contract
-    SmallVector<AffineMap> newMaps;
-    for (AffineMap map : maps) {
-      int64_t numDims = map.getNumDims();
-      int64_t numResults = map.getNumResults();
-      SmallVector<AffineExpr> exprs;
-      for (int i = 0; i < 3; ++i) {
-        AffineMap shiftedMap = map.shiftDims(i * numDims);
-        for (int j = 0; j < numResults; ++j) {
-          exprs.push_back(shiftedMap.getResult(j));
-        }
-      }
-      AffineMap newMap =
-          AffineMap::get(/*dimCount=*/3 * numDims,
-                         /*symbolCount=*/map.getNumSymbols(), exprs, ctx);
-      newMaps.push_back(newMap);
-    }
+    SmallVector<AffineMap> newMaps = getPackedAffineMaps(maps, ctx);
 
     Value localInit = getCombiningIdentityValue(
         loc, rewriter, contractOp.getKind(), acc.getType());
-
     auto localContractOp = vector::ContractionOp::create(
         rewriter, loc, lhs, rhs, localInit,
         rewriter.getAffineMapArrayAttr(newMaps),
@@ -2200,6 +2215,203 @@ struct DistributeConstantMask final
   int64_t subgroupSize;
 };
 
+struct DistributeShapeCast final : OpDistributionPattern<vector::ShapeCastOp> {
+  using OpDistributionPattern::OpDistributionPattern;
+
+  LogicalResult matchAndRewrite(vector::ShapeCastOp shapeCast,
+                                DistributionSignature &signature,
+                                PatternRewriter &rewriter) const override {
+    VectorValue src = shapeCast.getSource();
+    VectorValue dst = shapeCast.getResult();
+    NestedLayoutAttr srcLayout =
+        dyn_cast_if_present<NestedLayoutAttr>(signature[src]);
+    NestedLayoutAttr dstLayout =
+        dyn_cast_if_present<NestedLayoutAttr>(signature[dst]);
+    if (!srcLayout || !dstLayout) {
+      return rewriter.notifyMatchFailure(shapeCast,
+                                         "expected nested layout attr");
+    }
+
+    // unpack -> reshape -> pack
+    VectorValue unpacked = getDeinterleavedUnpackedForm(
+        rewriter, getDistributed(rewriter, shapeCast.getSource(), srcLayout),
+        srcLayout);
+    VectorValue reshaped = vector::ShapeCastOp::create(
+        rewriter, shapeCast.getLoc(),
+        VectorType::get(dstLayout.getUndistributedShape(),
+                        unpacked.getType().getElementType()),
+        unpacked);
+    VectorValue packed =
+        getInterleavedPackedForm(rewriter, reshaped, dstLayout);
+    replaceOpWithDistributedValues(rewriter, shapeCast, packed);
+    return success();
+  }
+};
+
+static SmallVector<int64_t> getExpandedInnerTilesPerm(NestedLayoutAttr layout,
+                                                      int64_t outerRank) {
+  // Get an permutation by finding where each element from the new
+  // ordering came from in the old ordering.
+  SmallVector<int64_t> perm;
+  for (int64_t j = 0; j < 3; ++j) {
+    for (int64_t i = 0; i < outerRank; ++i) {
+      // Outer elements come from (interleaved):
+      // j: 0 ... 3
+      //  i: 0 ... outerRank
+      //   j * rank + i
+      perm.push_back(j * layout.getRank() + i);
+    }
+  }
+  for (int64_t i = outerRank; i < layout.getRank(); ++i) {
+    for (int64_t j = 0; j < 3; ++j) {
+      // Inner elements come from (deinterleaved for flattening):
+      // i: outerRank ... rank
+      //  j: 0 ... 3
+      //   j * rank + i
+      perm.push_back(j * layout.getRank() + i);
+    }
+  }
+  return perm;
+}
+
+/// Given a interleaved, packed vector: vector< [B0 x B1] x [O0 x O1] x [E0 x
+/// E1] > Move all the inner tiles (example: inner rank = 1, B1, O1, E1) inside
+/// and flatten them (exampole: vector< [B0] x [O0] x [E0] x [B1 * O1 * E1]>).
+VectorValue getCompressedInnerTilesForm(OpBuilder &builder, Location loc,
+                                        VectorValue input,
+                                        NestedLayoutAttr layout,
+                                        int64_t outerRank) {
+  SmallVector<int64_t> invPerm = getExpandedInnerTilesPerm(layout, outerRank);
+  // Inverse the permutation and apply it.
+  VectorValue permuted = vector::TransposeOp::create(
+      builder, loc, input, invertPermutationVector(invPerm));
+  // Shape case inner innerRank * 3 dimensions into innerRank dimensions.
+  int64_t innerRank = layout.getRank() - outerRank;
+  SmallVector<int64_t> finalShape;
+  llvm::append_range(finalShape,
+                     permuted.getType().getShape().drop_back(innerRank * 3));
+  llvm::append_range(
+      finalShape,
+      ArrayRef(layout.getUndistributedShape()).take_back(innerRank));
+  VectorType reshapedType =
+      VectorType::get(finalShape, permuted.getType().getElementType());
+  return vector::ShapeCastOp::create(builder, loc, reshapedType, permuted);
+}
+
+VectorValue getExpandedInnerTilesForm(OpBuilder &builder, Location loc,
+                                      VectorValue input,
+                                      NestedLayoutAttr layout,
+                                      int64_t outerRank) {
+  // Shape cast the inner flattened dimensions back to innerRank * 3.
+  int64_t innerRank = layout.getRank() - outerRank;
+
+  ArrayRef<int64_t> outerShape =
+      input.getType().getShape().drop_back(innerRank);
+  SmallVector<int64_t> disUnpackedShape = layout.getDistributedUnpackedShape();
+  ArrayRef<int64_t> innerShape =
+      ArrayRef(disUnpackedShape).take_back(innerRank * 3);
+
+  SmallVector<int64_t> expandedShape;
+  llvm::append_range(expandedShape, outerShape);
+  llvm::append_range(expandedShape, innerShape);
+  VectorType reshapedType =
+      VectorType::get(expandedShape, input.getType().getElementType());
+  VectorValue reshaped =
+      vector::ShapeCastOp::create(builder, loc, reshapedType, input);
+
+  SmallVector<int64_t> perm = getExpandedInnerTilesPerm(layout, outerRank);
+  // Apply the permutation to interleave back the inner tiles.
+  VectorValue permuted =
+      vector::TransposeOp::create(builder, loc, reshaped, perm);
+  return permuted;
+}
+
+struct DistributeInnerTiled final
+    : OpDistributionPattern<IREE::Codegen::InnerTiledOp> {
+  using OpDistributionPattern::OpDistributionPattern;
+
+  LogicalResult matchAndRewrite(IREE::Codegen::InnerTiledOp tiledOp,
+                                DistributionSignature &signature,
+                                PatternRewriter &rewriter) const override {
+    auto semantics =
+        dyn_cast<IREE::GPU::InnerTiledSemanticsAttr>(tiledOp.getSemantics());
+    if (!semantics) {
+      return rewriter.notifyMatchFailure(
+          tiledOp, "unexpected tiled op semantics attribute type");
+    }
+    if (semantics.getDistributed()) {
+      return rewriter.notifyMatchFailure(tiledOp,
+                                         "tiledOp already distributed.");
+    }
+    if (tiledOp.hasTensorSemantics()) {
+      return rewriter.notifyMatchFailure(
+          tiledOp, "tiledOp must have vector semantics for distribution.");
+    }
+
+    SmallVector<Value> distributedOperands;
+    for (auto [idx, input] : llvm::enumerate(tiledOp.getOperands())) {
+      VectorValue vecInput = dyn_cast<VectorValue>(input);
+      if (!vecInput) {
+        distributedOperands.push_back(input);
+        continue;
+      }
+      auto layout = dyn_cast<NestedLayoutAttr>(signature[vecInput]);
+      if (!layout) {
+        return rewriter.notifyMatchFailure(
+            tiledOp, "input missing nested layout for distribution.");
+      }
+      VectorValue val = getDistributed(rewriter, vecInput, layout);
+      val = getCompressedInnerTilesForm(rewriter, tiledOp.getLoc(), val, layout,
+                                        tiledOp.getOperandOuterRank(idx));
+      distributedOperands.push_back(getDistributed(rewriter, vecInput, layout));
+    }
+
+    Location loc = tiledOp.getLoc();
+
+    // Create the new inner_tiled op.
+    ValueRange distributedInputs =
+        ValueRange(distributedOperands).take_front(tiledOp.getNumDpsInputs());
+    ValueRange distributedInits =
+        ValueRange(distributedOperands).take_back(tiledOp.getNumDpsInits());
+    SmallVector<Attribute> newIterators =
+        getPackedIterators(tiledOp.getIteratorTypes(), tiledOp.getContext());
+    SmallVector<AffineMap> newMaps = getPackedAffineMaps(
+        tiledOp.getIndexingMapsArray(), tiledOp.getContext());
+    auto distributedSemantics = IREE::GPU::InnerTiledSemanticsAttr::get(
+        rewriter.getContext(), /*distributed=*/true, semantics.getOpaque());
+    auto newTiledOp = IREE::Codegen::InnerTiledOp::create(
+        rewriter, loc, distributedInputs, distributedInits,
+        rewriter.getAffineMapArrayAttr(newMaps),
+        rewriter.getArrayAttr(newIterators), tiledOp.getKind(),
+        distributedSemantics);
+
+    SmallVector<Value> unreshapedResults;
+    for (auto [idx, result, oldResult] :
+         llvm::enumerate(newTiledOp.getResults(), tiledOp.getResults())) {
+      VectorValue vecResult = dyn_cast<VectorValue>(result);
+      VectorValue oldVecResult = dyn_cast<VectorValue>(oldResult);
+      if (!vecResult) {
+        unreshapedResults.push_back(result);
+        continue;
+      }
+      auto layout = dyn_cast<NestedLayoutAttr>(signature[oldVecResult]);
+      if (!layout) {
+        return rewriter.notifyMatchFailure(
+            tiledOp, "result missing nested layout for distribution.");
+      }
+      VectorValue expanded = getExpandedInnerTilesForm(
+          rewriter, tiledOp.getLoc(), vecResult, layout,
+          tiledOp.getOperandOuterRank(
+              tiledOp.getDpsInitOperand(idx)->getOperandNumber()));
+      unreshapedResults.push_back(expanded);
+    }
+
+    replaceOpWithDistributedValues(rewriter, tiledOp, unreshapedResults);
+
+    return success();
+  }
+};
+
 } // namespace
 
 void populateGPUDistributeNestedLayoutAttrPatterns(
@@ -2210,10 +2422,11 @@ void populateGPUDistributeNestedLayoutAttrPatterns(
                                      subgroupSize);
   patterns.add<DistributeTransferWrite>(patterns.getContext(), threadId,
                                         subgroupSize, workgroupSize);
-  patterns.add<DistributeBroadcast, DistributeTranspose>(patterns.getContext());
+  patterns.add<DistributeBroadcast, DistributeTranspose, DistributeShapeCast>(
+      patterns.getContext());
   patterns.add<DistributeMultiReduction>(patterns.getContext(), subgroupSize,
                                          maxBitsPerShuffle);
-  patterns.add<DistributeContract>(patterns.getContext());
+  patterns.add<DistributeContract, DistributeInnerTiled>(patterns.getContext());
   patterns.add<DistributeBatchOuterToLayoutConversions>(patterns.getContext());
   patterns.add<DistributeStep>(patterns.getContext(), threadId, subgroupSize);
   patterns.add<DistributeCreateMask, DistributeConstantMask>(
