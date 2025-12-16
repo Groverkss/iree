@@ -2320,6 +2320,7 @@ VectorValue getExpandedInnerTilesForm(OpBuilder &builder, Location loc,
       vector::ShapeCastOp::create(builder, loc, reshapedType, input);
 
   SmallVector<int64_t> perm = getExpandedInnerTilesPerm(layout, outerRank);
+
   // Apply the permutation to interleave back the inner tiles.
   VectorValue permuted =
       vector::TransposeOp::create(builder, loc, reshaped, perm);
@@ -2370,9 +2371,9 @@ struct DistributeInnerTiled final
 
     // Create the new inner_tiled op.
     ValueRange distributedInputs =
-        ValueRange(distributedOperands).take_front(tiledOp.getNumDpsInputs());
+        ValueRange(distributedOperands).drop_back(tiledOp.getNumOutputs());
     ValueRange distributedInits =
-        ValueRange(distributedOperands).take_back(tiledOp.getNumDpsInits());
+        ValueRange(distributedOperands).take_back(tiledOp.getNumOutputs());
     SmallVector<Attribute> newIterators =
         getPackedIterators(tiledOp.getIteratorTypes(), tiledOp.getContext());
     SmallVector<AffineMap> newMaps = getPackedAffineMaps(
@@ -2399,10 +2400,14 @@ struct DistributeInnerTiled final
         return rewriter.notifyMatchFailure(
             tiledOp, "result missing nested layout for distribution.");
       }
+      // DPS interface doesn't support vector types, so we have to calculate
+      // this ourselves.
+      // TODO: Support vector types in DPS interface.
+      int64_t operandIdx =
+          tiledOp.getNumOperands() - tiledOp.getNumOutputs() + idx;
       VectorValue expanded = getExpandedInnerTilesForm(
           rewriter, tiledOp.getLoc(), vecResult, layout,
-          tiledOp.getOperandOuterRank(
-              tiledOp.getDpsInitOperand(idx)->getOperandNumber()));
+          tiledOp.getOperandOuterRank(operandIdx));
       unreshapedResults.push_back(expanded);
     }
 
