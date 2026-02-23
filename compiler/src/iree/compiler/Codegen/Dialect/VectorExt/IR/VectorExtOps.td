@@ -256,7 +256,7 @@ def IREEVectorExt_YieldOp : IREEVectorExt_PureOp<"yield", [
     Pure,
     ReturnLike,
     Terminator,
-    ParentOneOf<["ArgCompareOp"]>
+    ParentOneOf<["ArgCompareOp", "AssociativeReduceOp", "AssociativeScanOp"]>
   ]> {
   let summary = "Yield operation for VectorExt operations with regions";
   let description = [{
@@ -423,6 +423,163 @@ def IREEVectorExt_ArgCompareOp : IREEVectorExt_PureOp<"arg_compare", [
   }];
 
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Associative reduce/scan ops.
+//===----------------------------------------------------------------------===//
+
+def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce", [
+  Pure,
+  AttrSizedOperandSegments,
+  SingleBlockImplicitTerminator<"IREE::VectorExt::YieldOp">
+]> {
+  let summary = "Associative reduction with user-defined combiner";
+  let description = [{
+    Reduces vectors along one or more dimensions using a user-defined
+    associative binary combiner. Supports variadic operands for multi-value
+    reductions (e.g., argmax over value+index tuples).
+
+    The combiner region takes `2*N` scalar arguments (N from each side of
+    the reduction) and yields `N` results. All operations in the combiner
+    must be pure.
+
+    The output shape equals the input shape with reduction dimensions removed.
+    Each `init` accumulator has the same shape as the corresponding output.
+
+    Example (simple sum):
+    ```mlir
+    %out = iree_vector_ext.associative_reduce
+        ins(%input : vector<4x64xf32>)
+        inits(%init : vector<4xf32>) [1] {
+      ^bb0(%lhs: f32, %rhs: f32):
+        %r = arith.addf %lhs, %rhs : f32
+        iree_vector_ext.yield %r : f32
+    } -> vector<4xf32>
+    ```
+
+    Example (argmax):
+    ```mlir
+    %val, %idx = iree_vector_ext.associative_reduce
+        ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>)
+        inits(%init_val, %init_idx : vector<4xf32>, vector<4xi32>) [1] {
+      ^bb0(%lv: f32, %li: i32, %rv: f32, %ri: i32):
+        %cmp = arith.cmpf ogt, %lv, %rv : f32
+        %ov = arith.select %cmp, %lv, %rv : f32
+        %oi = arith.select %cmp, %li, %ri : i32
+        iree_vector_ext.yield %ov, %oi : f32, i32
+    } -> vector<4xf32>, vector<4xi32>
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<AnyVectorOfAnyRank>:$inputs,
+    Variadic<AnyVectorOfAnyRank>:$inits,
+    DenseI64ArrayAttr:$reduction_dims
+  );
+
+  let results = (outs Variadic<AnyVectorOfAnyRank>:$results);
+  let regions = (region SizedRegion<1>:$combiner);
+
+  let assemblyFormat = [{
+    `ins` `(` $inputs `:` type($inputs) `)`
+    `inits` `(` $inits `:` type($inits) `)`
+    $reduction_dims
+    $combiner
+    attr-dict
+    `->` type($results)
+  }];
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    int64_t getNumOperandGroups() {
+      return getInputs().size();
+    }
+
+    VectorType getInputType() {
+      return cast<VectorType>(getInputs().front().getType());
+    }
+
+    int64_t getInputRank() {
+      return getInputType().getRank();
+    }
+
+    SmallVector<bool> getReductionMask() {
+      int64_t rank = getInputRank();
+      SmallVector<bool> mask(rank, false);
+      for (int64_t dim : getReductionDims()) {
+        mask[dim] = true;
+      }
+      return mask;
+    }
+  }];
+}
+
+def IREEVectorExt_AssociativeScanOp : IREEVectorExt_PureOp<"associative_scan", [
+  Pure,
+  SingleBlockImplicitTerminator<"IREE::VectorExt::YieldOp">
+]> {
+  let summary = "Associative scan (prefix sum) with user-defined combiner";
+  let description = [{
+    Performs an inclusive parallel prefix scan along one or more dimensions
+    using a user-defined associative binary combiner. Supports variadic
+    operands for multi-value scans.
+
+    The combiner region takes `2*N` scalar arguments and yields `N` results.
+    All operations in the combiner must be pure.
+
+    The output shape equals the input shape (scan dimensions are preserved).
+
+    Example (prefix sum):
+    ```mlir
+    %out = iree_vector_ext.associative_scan
+        ins(%input : vector<4x64xf32>) [1] {
+      ^bb0(%lhs: f32, %rhs: f32):
+        %r = arith.addf %lhs, %rhs : f32
+        iree_vector_ext.yield %r : f32
+    } -> vector<4x64xf32>
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<AnyVectorOfAnyRank>:$inputs,
+    DenseI64ArrayAttr:$reduction_dims
+  );
+
+  let results = (outs Variadic<AnyVectorOfAnyRank>:$results);
+  let regions = (region SizedRegion<1>:$combiner);
+
+  let assemblyFormat = [{
+    `ins` `(` $inputs `:` type($inputs) `)`
+    $reduction_dims
+    $combiner
+    attr-dict
+    `->` type($results)
+  }];
+  let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    int64_t getNumOperandGroups() {
+      return getInputs().size();
+    }
+
+    VectorType getInputType() {
+      return cast<VectorType>(getInputs().front().getType());
+    }
+
+    int64_t getInputRank() {
+      return getInputType().getRank();
+    }
+
+    SmallVector<bool> getReductionMask() {
+      int64_t rank = getInputRank();
+      SmallVector<bool> mask(rank, false);
+      for (int64_t dim : getReductionDims()) {
+        mask[dim] = true;
+      }
+      return mask;
+    }
+  }];
 }
 
 #endif  // IREE_DIALECT_VECTOREXT_OPS

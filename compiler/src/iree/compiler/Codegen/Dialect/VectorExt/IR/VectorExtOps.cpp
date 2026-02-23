@@ -744,10 +744,51 @@ static LogicalResult verifyYieldForArgCompare(YieldOp yieldOp,
   return success();
 }
 
+static LogicalResult
+verifyYieldForAssociativeOp(YieldOp yieldOp,
+                            ArrayRef<Type> expectedElementTypes) {
+  int64_t numOperands = yieldOp.getNumOperands();
+  int64_t expected = expectedElementTypes.size();
+  if (numOperands != expected) {
+    return yieldOp.emitOpError("expected ")
+           << expected << " yield operand(s), but got " << numOperands;
+  }
+  for (int64_t i = 0, e = expected; i < e; ++i) {
+    Type actual = yieldOp.getOperand(i).getType();
+    if (actual != expectedElementTypes[i]) {
+      return yieldOp.emitOpError("expected yield operand #")
+             << i << " to have type " << expectedElementTypes[i] << ", but got "
+             << actual;
+    }
+  }
+  return success();
+}
+
 LogicalResult YieldOp::verify() {
-  // ParentOneOf<["ArgCompareOp"]> ODS trait ensures parent is ArgCompareOp.
-  auto argCompareOp = cast<ArgCompareOp>((*this)->getParentOp());
-  return verifyYieldForArgCompare(*this, argCompareOp);
+  Operation *parent = (*this)->getParentOp();
+  if (auto argCompareOp = dyn_cast<ArgCompareOp>(parent)) {
+    return verifyYieldForArgCompare(*this, argCompareOp);
+  }
+
+  // Both AssociativeReduceOp and AssociativeScanOp share the same yield
+  // verification: each yield operand must match the element type of the
+  // corresponding input.
+  auto getElemTypes = [](OperandRange inputs) {
+    SmallVector<Type> elemTypes;
+    for (Value input : inputs) {
+      elemTypes.push_back(cast<VectorType>(input.getType()).getElementType());
+    }
+    return elemTypes;
+  };
+  if (auto reduceOp = dyn_cast<AssociativeReduceOp>(parent)) {
+    return verifyYieldForAssociativeOp(*this,
+                                       getElemTypes(reduceOp.getInputs()));
+  }
+  if (auto scanOp = dyn_cast<AssociativeScanOp>(parent)) {
+    return verifyYieldForAssociativeOp(*this, getElemTypes(scanOp.getInputs()));
+  }
+
+  llvm_unreachable("ParentOneOf trait should have rejected this");
 }
 
 //===----------------------------------------------------------------------===//
@@ -875,6 +916,195 @@ LogicalResult ArgCompareOp::verify() {
     if (!isPure(&op)) {
       return op.emitOpError(
           "comparator region must contain only pure operations");
+    }
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Shared verifiers for associative reduce/scan ops.
+//===----------------------------------------------------------------------===//
+
+static LogicalResult verifyReductionDims(Operation *op, int64_t inputRank,
+                                         ArrayRef<int64_t> reductionDims) {
+  if (reductionDims.empty()) {
+    return op->emitOpError("expected at least one reduction dimension");
+  }
+
+  for (int64_t i = 0, e = reductionDims.size(); i < e; ++i) {
+    int64_t dim = reductionDims[i];
+    if (dim < 0 || dim >= inputRank) {
+      return op->emitOpError("reduction dimension ")
+             << dim << " is out of range [0, " << inputRank << ")";
+    }
+    if (i > 0 && reductionDims[i] <= reductionDims[i - 1]) {
+      return op->emitOpError(
+                 "reduction dimensions must be sorted and unique, but got ")
+             << llvm::interleaved_array(reductionDims);
+    }
+  }
+  return success();
+}
+
+static LogicalResult verifyAssociativeCombiner(Operation *op,
+                                               OperandRange inputs,
+                                               Region &combiner) {
+  int64_t numGroups = inputs.size();
+  if (numGroups < 1) {
+    return op->emitOpError("expected at least one input");
+  }
+
+  // All inputs must have the same shape.
+  auto firstType = cast<VectorType>(inputs.front().getType());
+  for (Value input : inputs.drop_front()) {
+    auto inputType = cast<VectorType>(input.getType());
+    if (inputType.getShape() != firstType.getShape()) {
+      return op->emitOpError("all inputs must have the same shape, but got ")
+             << firstType << " and " << inputType;
+    }
+  }
+
+  // Combiner region: 2*N block args.
+  Block &block = combiner.front();
+  int64_t expectedArgs = 2 * numGroups;
+  if (static_cast<int64_t>(block.getNumArguments()) != expectedArgs) {
+    return op->emitOpError("combiner region must have exactly ")
+           << expectedArgs << " arguments (2 * " << numGroups
+           << " operand groups), but got " << block.getNumArguments();
+  }
+
+  // Block arg types: [elem0, elem1, ..., elem0, elem1, ...]
+  for (int64_t i = 0; i < expectedArgs; ++i) {
+    int64_t groupIdx = i % numGroups;
+    Type expectedTy =
+        cast<VectorType>(inputs[groupIdx].getType()).getElementType();
+    Type actualTy = block.getArgument(i).getType();
+    if (actualTy != expectedTy) {
+      return op->emitOpError("combiner argument #")
+             << i << " must have type " << expectedTy << ", but got "
+             << actualTy;
+    }
+  }
+
+  // All ops must be Pure.
+  for (Operation &bodyOp : block.getOperations()) {
+    if (!isPure(&bodyOp)) {
+      return bodyOp.emitOpError(
+          "combiner region must contain only pure operations");
+    }
+  }
+
+  return success();
+}
+
+/// Compute the expected shape after removing reduction dimensions.
+static SmallVector<int64_t> getReducedShape(VectorType inputType,
+                                            ArrayRef<int64_t> reductionDims) {
+  SmallVector<int64_t> shape;
+  for (int64_t i = 0, e = inputType.getRank(); i < e; ++i) {
+    if (!llvm::is_contained(reductionDims, i)) {
+      shape.push_back(inputType.getDimSize(i));
+    }
+  }
+  return shape;
+}
+
+//===----------------------------------------------------------------------===//
+// AssociativeReduceOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AssociativeReduceOp::verify() {
+  OperandRange inputs = getInputs();
+  OperandRange inits = getInits();
+  ResultRange results = getResults();
+
+  if (inputs.size() != inits.size()) {
+    return emitOpError("expected same number of inputs and inits, but got ")
+           << inputs.size() << " inputs and " << inits.size() << " inits";
+  }
+
+  if (inputs.size() != results.size()) {
+    return emitOpError("expected same number of inputs and results, but got ")
+           << inputs.size() << " inputs and " << results.size() << " results";
+  }
+
+  auto inputType = cast<VectorType>(inputs.front().getType());
+  if (failed(verifyReductionDims(getOperation(), inputType.getRank(),
+                                 getReductionDims()))) {
+    return failure();
+  }
+
+  if (failed(
+          verifyAssociativeCombiner(getOperation(), inputs, getCombiner()))) {
+    return failure();
+  }
+
+  // Verify init/result shapes and element types.
+  SmallVector<int64_t> expectedInitShape =
+      getReducedShape(inputType, getReductionDims());
+  for (auto [i, init, result, input] :
+       llvm::enumerate(inits, results, inputs)) {
+    auto initType = cast<VectorType>(init.getType());
+    auto resultType = cast<VectorType>(result.getType());
+    auto inType = cast<VectorType>(input.getType());
+
+    if (ArrayRef<int64_t>(expectedInitShape) != initType.getShape()) {
+      return emitOpError("init #")
+             << i
+             << " shape must match input shape with reduction dimensions "
+                "removed. Expected: "
+             << llvm::interleaved_array(expectedInitShape)
+             << ", but got: " << llvm::interleaved_array(initType.getShape());
+    }
+
+    if (initType.getElementType() != inType.getElementType()) {
+      return emitOpError("init #")
+             << i << " element type must match input #" << i
+             << " element type. Expected: " << inType.getElementType()
+             << ", but got: " << initType.getElementType();
+    }
+
+    if (resultType != initType) {
+      return emitOpError("result #")
+             << i << " type must match init #" << i
+             << " type. Expected: " << initType << ", but got: " << resultType;
+    }
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AssociativeScanOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AssociativeScanOp::verify() {
+  OperandRange inputs = getInputs();
+  ResultRange results = getResults();
+
+  if (inputs.size() != results.size()) {
+    return emitOpError("expected same number of inputs and results, but got ")
+           << inputs.size() << " inputs and " << results.size() << " results";
+  }
+
+  auto inputType = cast<VectorType>(inputs.front().getType());
+  if (failed(verifyReductionDims(getOperation(), inputType.getRank(),
+                                 getReductionDims()))) {
+    return failure();
+  }
+
+  if (failed(
+          verifyAssociativeCombiner(getOperation(), inputs, getCombiner()))) {
+    return failure();
+  }
+
+  // Results must match input types.
+  for (auto [i, input, result] : llvm::enumerate(inputs, results)) {
+    if (input.getType() != result.getType()) {
+      return emitOpError("result #") << i << " type must match input #" << i
+                                     << " type. Expected: " << input.getType()
+                                     << ", but got: " << result.getType();
     }
   }
 
