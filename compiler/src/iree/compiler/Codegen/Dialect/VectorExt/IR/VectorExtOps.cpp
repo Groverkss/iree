@@ -1279,9 +1279,91 @@ struct FoldZeroDimScan final : OpRewritePattern<AssociativeScanOp> {
   }
 };
 
+/// Inline a small associative_scan by extracting slices along scan dims
+/// and accumulating with cloned combiner ops. Unlike InlineSmallReduce,
+/// this preserves dimensions (prefix scan semantics).
+struct InlineSmallScan final : OpRewritePattern<AssociativeScanOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AssociativeScanOp op,
+                                PatternRewriter &rewriter) const override {
+    ArrayRef<int64_t> scanDims = op.getReductionDims();
+    if (scanDims.empty()) {
+      return failure();
+    }
+
+    VectorType inputType = op.getInputType();
+    for (int64_t d : scanDims) {
+      int64_t size = inputType.getDimSize(d);
+      if (ShapedType::isDynamic(size) || size > kMaxInlineReductionSize) {
+        return failure();
+      }
+    }
+
+    Location loc = op.getLoc();
+    int64_t numGroups = op.getNumOperandGroups();
+    Block &body = op.getCombiner().front();
+
+    // Process one scan dim at a time.
+    SmallVector<Value> current(op.getInputs());
+    for (int64_t d : scanDims) {
+      auto curType = cast<VectorType>(current[0].getType());
+      int64_t dimSize = curType.getDimSize(d);
+
+      // Result shape for extracted slices (dim d becomes size 1, not removed).
+      SmallVector<int64_t> sliceResultShape(curType.getShape());
+      sliceResultShape[d] = 1;
+
+      // Extract slice at index 0 as initial accumulator.
+      SmallVector<Value> acc(numGroups);
+      for (int64_t g = 0; g < numGroups; ++g) {
+        acc[g] = extractSliceAlongDim(rewriter, loc, current[g], d, 0);
+      }
+
+      // Compute result shape for combiner (rank-1, dim d removed).
+      SmallVector<int64_t> combinerShape;
+      for (int64_t i = 0, e = curType.getRank(); i < e; ++i) {
+        if (i != d) {
+          combinerShape.push_back(curType.getDimSize(i));
+        }
+      }
+
+      // Build result by inserting accumulated slices back.
+      SmallVector<Value> result(current);
+
+      // Slice 0 stays as-is. Left-fold remaining slices.
+      for (int64_t i = 1; i < dimSize; ++i) {
+        SmallVector<Value> slices(numGroups);
+        for (int64_t g = 0; g < numGroups; ++g) {
+          slices[g] = extractSliceAlongDim(rewriter, loc, current[g], d, i);
+        }
+        acc = applyCombinerToVectors(rewriter, loc, body, acc, slices,
+                                     combinerShape);
+        // Insert acc back into result at position i along dim d.
+        for (int64_t g = 0; g < numGroups; ++g) {
+          Value accReshaped = vector::ShapeCastOp::create(
+              rewriter, loc,
+              VectorType::get(sliceResultShape, curType.getElementType()),
+              acc[g]);
+          SmallVector<int64_t> offsets(curType.getRank(), 0);
+          offsets[d] = i;
+          SmallVector<int64_t> strides(curType.getRank(), 1);
+          result[g] = vector::InsertStridedSliceOp::create(
+              rewriter, loc, accReshaped, result[g], offsets, strides);
+        }
+      }
+
+      current = result;
+    }
+
+    rewriter.replaceOp(op, current);
+    return success();
+  }
+};
+
 void AssociativeScanOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
-  results.add<FoldZeroDimScan>(context);
+  results.add<FoldZeroDimScan, InlineSmallScan>(context);
 }
 
 // clang-format off

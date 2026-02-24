@@ -342,3 +342,39 @@ func.func @no_inline_large_reduce(%input: vector<4x64xf32>) -> vector<4xf32> {
   } -> vector<4xf32>
   return %0 : vector<4xf32>
 }
+
+// -----
+
+// CHECK-LABEL: @inline_small_scan_size4
+// CHECK-SAME: (%[[INPUT:.*]]: vector<4x4xf32>)
+func.func @inline_small_scan_size4(%input: vector<4x4xf32>) -> vector<4x4xf32> {
+  // CHECK-NOT: iree_vector_ext.associative_scan
+  // CHECK-DAG: %[[S0:.*]] = vector.extract_strided_slice %[[INPUT]] {offsets = [0, 0], sizes = [4, 1], strides = [1, 1]}
+  // CHECK-DAG: %[[S1:.*]] = vector.extract_strided_slice %[[INPUT]] {offsets = [0, 1], sizes = [4, 1], strides = [1, 1]}
+  // CHECK: arith.addf
+  // CHECK: vector.insert_strided_slice
+  // CHECK: arith.addf
+  // CHECK: vector.insert_strided_slice
+  // CHECK: arith.addf
+  // CHECK: vector.insert_strided_slice
+  %0 = iree_vector_ext.associative_scan ins(%input : vector<4x4xf32>) [1] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4x4xf32>
+  return %0 : vector<4x4xf32>
+}
+
+// -----
+
+// Verify that large scans are NOT inlined.
+// CHECK-LABEL: @no_inline_large_scan
+func.func @no_inline_large_scan(%input: vector<4x64xf32>) -> vector<4x64xf32> {
+  // CHECK: iree_vector_ext.associative_scan
+  %0 = iree_vector_ext.associative_scan ins(%input : vector<4x64xf32>) [1] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4x64xf32>
+  return %0 : vector<4x64xf32>
+}
