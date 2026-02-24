@@ -247,3 +247,98 @@ func.func @transfer_gather_fold_all_false_mask(
 // CHECK: %[[CST:.*]] = arith.constant dense<0.000000e+00> : vector<64x32xf16>
 // CHECK: return %[[CST]]
 // CHECK-NOT: transfer_gather
+
+// -----
+
+// CHECK-LABEL: @fold_zero_dim_reduce
+// CHECK-SAME: (%[[INPUT:.*]]: vector<4x64xf32>)
+func.func @fold_zero_dim_reduce(%input: vector<4x64xf32>) -> vector<4x64xf32> {
+  // CHECK-NOT: iree_vector_ext.associative_reduce
+  %0 = iree_vector_ext.associative_reduce ins(%input : vector<4x64xf32>) [] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4x64xf32>
+  // CHECK: return %[[INPUT]]
+  return %0 : vector<4x64xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @fold_zero_dim_reduce_multi
+// CHECK-SAME: (%[[IN0:.*]]: vector<4x64xf32>, %[[IN1:.*]]: vector<4x64xi32>)
+func.func @fold_zero_dim_reduce_multi(%in0: vector<4x64xf32>, %in1: vector<4x64xi32>) -> (vector<4x64xf32>, vector<4x64xi32>) {
+  // CHECK-NOT: iree_vector_ext.associative_reduce
+  %0:2 = iree_vector_ext.associative_reduce ins(%in0, %in1 : vector<4x64xf32>, vector<4x64xi32>) [] {
+  ^bb0(%a0: f32, %a1: i32, %b0: f32, %b1: i32):
+    %cmp = arith.cmpf ogt, %a0, %b0 : f32
+    %sel0 = arith.select %cmp, %a0, %b0 : f32
+    %sel1 = arith.select %cmp, %a1, %b1 : i32
+    iree_vector_ext.yield %sel0, %sel1 : f32, i32
+  } -> vector<4x64xf32>, vector<4x64xi32>
+  // CHECK: return %[[IN0]], %[[IN1]]
+  return %0#0, %0#1 : vector<4x64xf32>, vector<4x64xi32>
+}
+
+// -----
+
+// CHECK-LABEL: @fold_zero_dim_scan
+// CHECK-SAME: (%[[INPUT:.*]]: vector<4x64xf32>)
+func.func @fold_zero_dim_scan(%input: vector<4x64xf32>) -> vector<4x64xf32> {
+  // CHECK-NOT: iree_vector_ext.associative_scan
+  %0 = iree_vector_ext.associative_scan ins(%input : vector<4x64xf32>) [] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4x64xf32>
+  // CHECK: return %[[INPUT]]
+  return %0 : vector<4x64xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @inline_small_reduce_size2
+// CHECK-SAME: (%[[INPUT:.*]]: vector<4x2xf32>)
+func.func @inline_small_reduce_size2(%input: vector<4x2xf32>) -> vector<4xf32> {
+  // CHECK-NOT: iree_vector_ext.associative_reduce
+  // CHECK: arith.addf {{.*}} : vector<4xf32>
+  %0 = iree_vector_ext.associative_reduce ins(%input : vector<4x2xf32>) [1] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4xf32>
+  return %0 : vector<4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @inline_small_reduce_argmax
+// CHECK-SAME: (%[[IN0:.*]]: vector<4x2xf32>, %[[IN1:.*]]: vector<4x2xi32>)
+func.func @inline_small_reduce_argmax(%in0: vector<4x2xf32>, %in1: vector<4x2xi32>) -> (vector<4xf32>, vector<4xi32>) {
+  // CHECK-NOT: iree_vector_ext.associative_reduce
+  // CHECK: arith.cmpf ogt
+  // CHECK: arith.select
+  // CHECK: arith.select
+  %0:2 = iree_vector_ext.associative_reduce ins(%in0, %in1 : vector<4x2xf32>, vector<4x2xi32>) [1] {
+  ^bb0(%a0: f32, %a1: i32, %b0: f32, %b1: i32):
+    %cmp = arith.cmpf ogt, %a0, %b0 : f32
+    %sel0 = arith.select %cmp, %a0, %b0 : f32
+    %sel1 = arith.select %cmp, %a1, %b1 : i32
+    iree_vector_ext.yield %sel0, %sel1 : f32, i32
+  } -> vector<4xf32>, vector<4xi32>
+  return %0#0, %0#1 : vector<4xf32>, vector<4xi32>
+}
+
+// -----
+
+// Verify that large reductions are NOT inlined.
+// CHECK-LABEL: @no_inline_large_reduce
+func.func @no_inline_large_reduce(%input: vector<4x64xf32>) -> vector<4xf32> {
+  // CHECK: iree_vector_ext.associative_reduce
+  %0 = iree_vector_ext.associative_reduce ins(%input : vector<4x64xf32>) [1] {
+  ^bb0(%a: f32, %b: f32):
+    %add = arith.addf %a, %b : f32
+    iree_vector_ext.yield %add : f32
+  } -> vector<4xf32>
+  return %0 : vector<4xf32>
+}

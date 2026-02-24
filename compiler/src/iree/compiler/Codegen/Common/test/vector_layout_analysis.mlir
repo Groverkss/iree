@@ -949,3 +949,63 @@ func.func @fixup_null_layout_transpose_broadcast(
   vector.transfer_write %bc, %arr[%c0, %c0] {in_bounds = [true, true]} : vector<16x16xf16>, memref<16x16xf16>
   func.return
 }
+
+// -----
+
+#layout = #iree_vector_ext.nested_layout<
+  subgroup_tile = [1, 1],
+  batch_tile = [1, 2],
+  outer_tile = [1, 1],
+  thread_tile = [1, 1],
+  element_tile = [16, 8],
+
+  subgroup_strides = [0, 0],
+  thread_strides   = [0, 0]
+>
+
+// Forward propagation through associative_reduce along dim 0.
+func.func @associative_reduce_dim0(%arr: memref<16x16xf16>, %a: vector<16xf16>) -> vector<16xf16> {
+  %c0 = arith.constant 0 : index
+  %cst_0 = arith.constant 0.0 : f16
+  %root = vector.transfer_read %arr[%c0, %c0], %cst_0 {in_bounds = [true, true]} : memref<16x16xf16>, vector<16x16xf16>
+  // expected-remark @above {{element_tile = [16, 8]}}
+  %rootl = iree_vector_ext.to_layout %root to layout(#layout) : vector<16x16xf16>
+  // expected-remark @below {{element_tile = [8]}}
+  %red = iree_vector_ext.associative_reduce ins(%rootl : vector<16x16xf16>) [0] {
+  ^bb0(%arg0: f16, %arg1: f16):
+    %add = arith.addf %arg0, %arg1 : f16
+    iree_vector_ext.yield %add : f16
+  } -> vector<16xf16>
+  %c = arith.mulf %red, %a : vector<16xf16>
+  // expected-remark @above {{element_tile = [8]}}
+  func.return %c : vector<16xf16>
+}
+
+// -----
+
+#layout = #iree_vector_ext.nested_layout<
+  subgroup_tile = [1, 1],
+  batch_tile = [1, 2],
+  outer_tile = [1, 1],
+  thread_tile = [4, 16],
+  element_tile = [4, 1],
+
+  subgroup_strides = [1, 1],
+  thread_strides   = [1, 4]
+>
+
+// Forward propagation through associative_scan (preserves shape).
+func.func @associative_scan_propagate(%arr: memref<16x32xf16>) -> vector<16x32xf16> {
+  %c0 = arith.constant 0 : index
+  %cst_0 = arith.constant 0.0 : f16
+  %root = vector.transfer_read %arr[%c0, %c0], %cst_0 {in_bounds = [true, true]} : memref<16x32xf16>, vector<16x32xf16>
+  // expected-remark @above {{thread_strides = [1, 4]}}
+  %rootl = iree_vector_ext.to_layout %root to layout(#layout) : vector<16x32xf16>
+  // expected-remark @below {{thread_strides = [1, 4]}}
+  %scan = iree_vector_ext.associative_scan ins(%rootl : vector<16x32xf16>) [1] {
+  ^bb0(%arg0: f16, %arg1: f16):
+    %add = arith.addf %arg0, %arg1 : f16
+    iree_vector_ext.yield %add : f16
+  } -> vector<16x32xf16>
+  func.return %scan : vector<16x32xf16>
+}

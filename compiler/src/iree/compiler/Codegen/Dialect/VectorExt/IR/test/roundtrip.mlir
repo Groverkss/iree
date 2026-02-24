@@ -459,15 +459,12 @@ func.func @arg_compare_1d_to_0d(%input: vector<128xf32>,
 // -----
 
 // CHECK-LABEL: func @associative_reduce_simple
-func.func @associative_reduce_simple(%input: vector<4x64xf32>,
-                                     %init: vector<4xf32>) -> vector<4xf32> {
+func.func @associative_reduce_simple(%input: vector<4x64xf32>) -> vector<4xf32> {
   // CHECK: iree_vector_ext.associative_reduce
   // CHECK-SAME: ins(%{{.*}} : vector<4x64xf32>)
-  // CHECK-SAME: inits(%{{.*}} : vector<4xf32>)
   // CHECK-SAME: [1]
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -479,17 +476,13 @@ func.func @associative_reduce_simple(%input: vector<4x64xf32>,
 
 // CHECK-LABEL: func @associative_reduce_argmax
 func.func @associative_reduce_argmax(%in_val: vector<4x64xf32>,
-                                     %in_idx: vector<4x64xi32>,
-                                     %init_val: vector<4xf32>,
-                                     %init_idx: vector<4xi32>)
+                                     %in_idx: vector<4x64xi32>)
     -> (vector<4xf32>, vector<4xi32>) {
   // CHECK: iree_vector_ext.associative_reduce
   // CHECK-SAME: ins(%{{.*}}, %{{.*}} : vector<4x64xf32>, vector<4x64xi32>)
-  // CHECK-SAME: inits(%{{.*}}, %{{.*}} : vector<4xf32>, vector<4xi32>)
   // CHECK-SAME: [1]
   %result:2 = iree_vector_ext.associative_reduce
-      ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>)
-      inits(%init_val, %init_idx : vector<4xf32>, vector<4xi32>) [1] {
+      ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>) [1] {
     ^bb0(%lv: f32, %li: i32, %rv: f32, %ri: i32):
       %cmp = arith.cmpf ogt, %lv, %rv : f32
       %ov = arith.select %cmp, %lv, %rv : f32
@@ -502,13 +495,11 @@ func.func @associative_reduce_argmax(%in_val: vector<4x64xf32>,
 // -----
 
 // CHECK-LABEL: func @associative_reduce_multi_dim
-func.func @associative_reduce_multi_dim(%input: vector<4x8x16xf32>,
-                                        %init: vector<8xf32>) -> vector<8xf32> {
+func.func @associative_reduce_multi_dim(%input: vector<4x8x16xf32>) -> vector<8xf32> {
   // CHECK: iree_vector_ext.associative_reduce
   // CHECK-SAME: [0, 2]
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x8x16xf32>)
-      inits(%init : vector<8xf32>) [0, 2] {
+      ins(%input : vector<4x8x16xf32>) [0, 2] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -519,18 +510,32 @@ func.func @associative_reduce_multi_dim(%input: vector<4x8x16xf32>,
 // -----
 
 // CHECK-LABEL: func @associative_reduce_to_0d
-func.func @associative_reduce_to_0d(%input: vector<128xf32>,
-                                    %init: vector<f32>) -> vector<f32> {
+func.func @associative_reduce_to_0d(%input: vector<128xf32>) -> vector<f32> {
   // CHECK: iree_vector_ext.associative_reduce
   // CHECK-SAME: [0]
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<128xf32>)
-      inits(%init : vector<f32>) [0] {
+      ins(%input : vector<128xf32>) [0] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
   } -> vector<f32>
   return %0 : vector<f32>
+}
+
+// -----
+
+// CHECK-LABEL: func @associative_reduce_zero_dim
+func.func @associative_reduce_zero_dim(%input: vector<4x64xf32>) -> vector<4x64xf32> {
+  // CHECK: iree_vector_ext.associative_reduce
+  // CHECK-SAME: ins(%{{.*}} : vector<4x64xf32>)
+  // CHECK-SAME: []
+  %0 = iree_vector_ext.associative_reduce
+      ins(%input : vector<4x64xf32>) [] {
+    ^bb0(%lhs: f32, %rhs: f32):
+      %r = arith.addf %lhs, %rhs : f32
+      iree_vector_ext.yield %r : f32
+  } -> vector<4x64xf32>
+  return %0 : vector<4x64xf32>
 }
 
 // -----

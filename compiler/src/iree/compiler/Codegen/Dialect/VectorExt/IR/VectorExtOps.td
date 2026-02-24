@@ -431,7 +431,6 @@ def IREEVectorExt_ArgCompareOp : IREEVectorExt_PureOp<"arg_compare", [
 
 def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce", [
   Pure,
-  AttrSizedOperandSegments,
   SingleBlockImplicitTerminator<"IREE::VectorExt::YieldOp">
 ]> {
   let summary = "Associative reduction with user-defined combiner";
@@ -445,13 +444,12 @@ def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce
     must be pure.
 
     The output shape equals the input shape with reduction dimensions removed.
-    Each `init` accumulator has the same shape as the corresponding output.
+    When `reduction_dims` is empty, the op is an identity (result = input).
 
     Example (simple sum):
     ```mlir
     %out = iree_vector_ext.associative_reduce
-        ins(%input : vector<4x64xf32>)
-        inits(%init : vector<4xf32>) [1] {
+        ins(%input : vector<4x64xf32>) [1] {
       ^bb0(%lhs: f32, %rhs: f32):
         %r = arith.addf %lhs, %rhs : f32
         iree_vector_ext.yield %r : f32
@@ -461,8 +459,7 @@ def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce
     Example (argmax):
     ```mlir
     %val, %idx = iree_vector_ext.associative_reduce
-        ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>)
-        inits(%init_val, %init_idx : vector<4xf32>, vector<4xi32>) [1] {
+        ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>) [1] {
       ^bb0(%lv: f32, %li: i32, %rv: f32, %ri: i32):
         %cmp = arith.cmpf ogt, %lv, %rv : f32
         %ov = arith.select %cmp, %lv, %rv : f32
@@ -474,7 +471,6 @@ def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce
 
   let arguments = (ins
     Variadic<AnyVectorOfAnyRank>:$inputs,
-    Variadic<AnyVectorOfAnyRank>:$inits,
     DenseI64ArrayAttr:$reduction_dims
   );
 
@@ -483,13 +479,13 @@ def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce
 
   let assemblyFormat = [{
     `ins` `(` $inputs `:` type($inputs) `)`
-    `inits` `(` $inits `:` type($inits) `)`
     $reduction_dims
     $combiner
     attr-dict
     `->` type($results)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
     int64_t getNumOperandGroups() {
@@ -557,6 +553,7 @@ def IREEVectorExt_AssociativeScanOp : IREEVectorExt_PureOp<"associative_scan", [
     `->` type($results)
   }];
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
     int64_t getNumOperandGroups() {

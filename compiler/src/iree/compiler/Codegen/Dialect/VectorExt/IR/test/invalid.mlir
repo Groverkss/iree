@@ -413,12 +413,10 @@ func.func @arg_compare_yield_wrong_operand_type(%input: vector<4x128xf32>,
 
 // -----
 
-func.func @reduce_dim_out_of_range(%input: vector<4x64xf32>,
-                                   %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_dim_out_of_range(%input: vector<4x64xf32>) -> vector<4xf32> {
   // expected-error @+1 {{reduction dimension 2 is out of range [0, 2)}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [2] {
+      ins(%input : vector<4x64xf32>) [2] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -428,12 +426,10 @@ func.func @reduce_dim_out_of_range(%input: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_duplicate_dims(%input: vector<4x8x16xf32>,
-                                 %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_duplicate_dims(%input: vector<4x8x16xf32>) -> vector<4xf32> {
   // expected-error @+1 {{reduction dimensions must be sorted and unique}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x8x16xf32>)
-      inits(%init : vector<4xf32>) [1, 1] {
+      ins(%input : vector<4x8x16xf32>) [1, 1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -443,12 +439,10 @@ func.func @reduce_duplicate_dims(%input: vector<4x8x16xf32>,
 
 // -----
 
-func.func @reduce_unsorted_dims(%input: vector<4x8x16xf32>,
-                                %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_unsorted_dims(%input: vector<4x8x16xf32>) -> vector<4xf32> {
   // expected-error @+1 {{reduction dimensions must be sorted and unique}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x8x16xf32>)
-      inits(%init : vector<4xf32>) [2, 1] {
+      ins(%input : vector<4x8x16xf32>) [2, 1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -458,12 +452,10 @@ func.func @reduce_unsorted_dims(%input: vector<4x8x16xf32>,
 
 // -----
 
-func.func @reduce_init_shape_mismatch(%input: vector<4x64xf32>,
-                                      %init: vector<8xf32>) -> vector<8xf32> {
-  // expected-error @+1 {{init #0 shape must match input shape with reduction dimensions removed}}
+func.func @reduce_result_shape_mismatch(%input: vector<4x64xf32>) -> vector<8xf32> {
+  // expected-error @+1 {{result #0 shape must match input shape with reduction dimensions removed}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<8xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -473,12 +465,10 @@ func.func @reduce_init_shape_mismatch(%input: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_init_element_type_mismatch(%input: vector<4x64xf32>,
-                                             %init: vector<4xf16>) -> vector<4xf16> {
-  // expected-error @+1 {{init #0 element type must match input #0 element type}}
+func.func @reduce_result_element_type_mismatch(%input: vector<4x64xf32>) -> vector<4xf16> {
+  // expected-error @+1 {{result #0 element type must match input #0 element type}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf16>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       iree_vector_ext.yield %r : f32
@@ -488,12 +478,10 @@ func.func @reduce_init_element_type_mismatch(%input: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_wrong_combiner_args(%input: vector<4x64xf32>,
-                                      %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_wrong_combiner_args(%input: vector<4x64xf32>) -> vector<4xf32> {
   // expected-error @+1 {{combiner region must have exactly 2 arguments}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%a: f32, %b: f32, %c: f32):
       %r = arith.addf %a, %b : f32
       iree_vector_ext.yield %r : f32
@@ -503,12 +491,10 @@ func.func @reduce_wrong_combiner_args(%input: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_combiner_arg_type_mismatch(%input: vector<4x64xf32>,
-                                             %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_combiner_arg_type_mismatch(%input: vector<4x64xf32>) -> vector<4xf32> {
   // expected-error @+1 {{combiner argument #0 must have type 'f32', but got 'i32'}}
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%a: i32, %b: f32):
       %r = arith.sitofp %a : i32 to f32
       iree_vector_ext.yield %r : f32
@@ -519,14 +505,11 @@ func.func @reduce_combiner_arg_type_mismatch(%input: vector<4x64xf32>,
 // -----
 
 func.func @reduce_inputs_different_shapes(%a: vector<4x64xf32>,
-                                          %b: vector<8x64xi32>,
-                                          %ia: vector<4xf32>,
-                                          %ib: vector<8xi32>)
+                                          %b: vector<8x64xi32>)
     -> (vector<4xf32>, vector<8xi32>) {
   // expected-error @+1 {{all inputs must have the same shape}}
   %result:2 = iree_vector_ext.associative_reduce
-      ins(%a, %b : vector<4x64xf32>, vector<8x64xi32>)
-      inits(%ia, %ib : vector<4xf32>, vector<8xi32>) [1] {
+      ins(%a, %b : vector<4x64xf32>, vector<8x64xi32>) [1] {
     ^bb0(%lv: f32, %li: i32, %rv: f32, %ri: i32):
       iree_vector_ext.yield %lv, %li : f32, i32
   } -> vector<4xf32>, vector<8xi32>
@@ -535,11 +518,9 @@ func.func @reduce_inputs_different_shapes(%a: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_yield_count_mismatch(%input: vector<4x64xf32>,
-                                       %init: vector<4xf32>) -> vector<4xf32> {
+func.func @reduce_yield_count_mismatch(%input: vector<4x64xf32>) -> vector<4xf32> {
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%lhs: f32, %rhs: f32):
       %r = arith.addf %lhs, %rhs : f32
       // expected-error @+1 {{expected 1 yield operand(s), but got 2}}
@@ -551,13 +532,10 @@ func.func @reduce_yield_count_mismatch(%input: vector<4x64xf32>,
 // -----
 
 func.func @reduce_yield_type_mismatch(%in_val: vector<4x64xf32>,
-                                      %in_idx: vector<4x64xi32>,
-                                      %init_val: vector<4xf32>,
-                                      %init_idx: vector<4xi32>)
+                                      %in_idx: vector<4x64xi32>)
     -> (vector<4xf32>, vector<4xi32>) {
   %result:2 = iree_vector_ext.associative_reduce
-      ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>)
-      inits(%init_val, %init_idx : vector<4xf32>, vector<4xi32>) [1] {
+      ins(%in_val, %in_idx : vector<4x64xf32>, vector<4x64xi32>) [1] {
     ^bb0(%lv: f32, %li: i32, %rv: f32, %ri: i32):
       %cmp = arith.cmpf ogt, %lv, %rv : f32
       %ov = arith.select %cmp, %lv, %rv : f32
@@ -609,21 +587,6 @@ func.func @scan_inputs_different_shapes(%a: vector<4x64xf32>,
 
 // -----
 
-func.func @reduce_result_type_mismatch(%input: vector<4x64xf32>,
-                                       %init: vector<4xf32>) -> vector<4xf16> {
-  // expected-error @+1 {{result #0 type must match init #0 type}}
-  %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
-    ^bb0(%lhs: f32, %rhs: f32):
-      %r = arith.addf %lhs, %rhs : f32
-      iree_vector_ext.yield %r : f32
-  } -> vector<4xf16>
-  return %0 : vector<4xf16>
-}
-
-// -----
-
 func.func @scan_result_type_mismatch(%input: vector<4x64xf32>) -> vector<4x64xf16> {
   // expected-error @+1 {{result #0 type must match input #0 type}}
   %0 = iree_vector_ext.associative_scan
@@ -638,11 +601,9 @@ func.func @scan_result_type_mismatch(%input: vector<4x64xf32>) -> vector<4x64xf1
 // -----
 
 func.func @reduce_impure_combiner(%input: vector<4x64xf32>,
-                                  %init: vector<4xf32>,
                                   %buf: memref<f32>) -> vector<4xf32> {
   %0 = iree_vector_ext.associative_reduce
-      ins(%input : vector<4x64xf32>)
-      inits(%init : vector<4xf32>) [1] {
+      ins(%input : vector<4x64xf32>) [1] {
     ^bb0(%lhs: f32, %rhs: f32):
       // expected-error @+1 {{combiner region must contain only pure operations}}
       memref.store %lhs, %buf[] : memref<f32>

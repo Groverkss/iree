@@ -928,10 +928,6 @@ LogicalResult ArgCompareOp::verify() {
 
 static LogicalResult verifyReductionDims(Operation *op, int64_t inputRank,
                                          ArrayRef<int64_t> reductionDims) {
-  if (reductionDims.empty()) {
-    return op->emitOpError("expected at least one reduction dimension");
-  }
-
   for (int64_t i = 0, e = reductionDims.size(); i < e; ++i) {
     int64_t dim = reductionDims[i];
     if (dim < 0 || dim >= inputRank) {
@@ -1016,13 +1012,7 @@ static SmallVector<int64_t> getReducedShape(VectorType inputType,
 
 LogicalResult AssociativeReduceOp::verify() {
   OperandRange inputs = getInputs();
-  OperandRange inits = getInits();
   ResultRange results = getResults();
-
-  if (inputs.size() != inits.size()) {
-    return emitOpError("expected same number of inputs and inits, but got ")
-           << inputs.size() << " inputs and " << inits.size() << " inits";
-  }
 
   if (inputs.size() != results.size()) {
     return emitOpError("expected same number of inputs and results, but got ")
@@ -1040,35 +1030,27 @@ LogicalResult AssociativeReduceOp::verify() {
     return failure();
   }
 
-  // Verify init/result shapes and element types.
-  SmallVector<int64_t> expectedInitShape =
+  // Verify result shapes and element types.
+  SmallVector<int64_t> expectedResultShape =
       getReducedShape(inputType, getReductionDims());
-  for (auto [i, init, result, input] :
-       llvm::enumerate(inits, results, inputs)) {
-    auto initType = cast<VectorType>(init.getType());
+  for (auto [i, result, input] : llvm::enumerate(results, inputs)) {
     auto resultType = cast<VectorType>(result.getType());
     auto inType = cast<VectorType>(input.getType());
 
-    if (ArrayRef<int64_t>(expectedInitShape) != initType.getShape()) {
-      return emitOpError("init #")
+    if (ArrayRef<int64_t>(expectedResultShape) != resultType.getShape()) {
+      return emitOpError("result #")
              << i
              << " shape must match input shape with reduction dimensions "
                 "removed. Expected: "
-             << llvm::interleaved_array(expectedInitShape)
-             << ", but got: " << llvm::interleaved_array(initType.getShape());
+             << llvm::interleaved_array(expectedResultShape)
+             << ", but got: " << llvm::interleaved_array(resultType.getShape());
     }
 
-    if (initType.getElementType() != inType.getElementType()) {
-      return emitOpError("init #")
+    if (resultType.getElementType() != inType.getElementType()) {
+      return emitOpError("result #")
              << i << " element type must match input #" << i
              << " element type. Expected: " << inType.getElementType()
-             << ", but got: " << initType.getElementType();
-    }
-
-    if (resultType != initType) {
-      return emitOpError("result #")
-             << i << " type must match init #" << i
-             << " type. Expected: " << initType << ", but got: " << resultType;
+             << ", but got: " << resultType.getElementType();
     }
   }
 
@@ -1109,6 +1091,197 @@ LogicalResult AssociativeScanOp::verify() {
   }
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AssociativeReduceOp canonicalization
+//===----------------------------------------------------------------------===//
+
+/// Fold zero-dim reduce to identity: when reduction_dims is empty, the result
+/// equals the input.
+struct FoldZeroDimReduce final : OpRewritePattern<AssociativeReduceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AssociativeReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getReductionDims().empty()) {
+      return failure();
+    }
+    rewriter.replaceOp(op, op.getInputs());
+    return success();
+  }
+};
+
+/// Maximum size of a reduction dimension that will be inlined by the
+/// InlineSmallReduce canonicalization. Keeps code size bounded.
+static constexpr int64_t kMaxInlineReductionSize = 8;
+
+/// Extract a slice at position `idx` along dimension `dim`, removing that
+/// dimension from the result shape via shape_cast.
+static Value extractSliceAlongDim(PatternRewriter &rewriter, Location loc,
+                                  Value source, int64_t dim, int64_t idx) {
+  auto sourceType = cast<VectorType>(source.getType());
+  int64_t rank = sourceType.getRank();
+
+  // Build offsets/sizes/strides for extract_strided_slice.
+  SmallVector<int64_t> offsets(rank, 0);
+  SmallVector<int64_t> sizes(sourceType.getShape());
+  SmallVector<int64_t> strides(rank, 1);
+  offsets[dim] = idx;
+  sizes[dim] = 1;
+
+  Value slice = vector::ExtractStridedSliceOp::create(rewriter, loc, source,
+                                                      offsets, sizes, strides);
+
+  // Shape cast to remove the size-1 dimension.
+  SmallVector<int64_t> resultShape;
+  for (int64_t i = 0; i < rank; ++i) {
+    if (i != dim) {
+      resultShape.push_back(sourceType.getDimSize(i));
+    }
+  }
+  VectorType resultType =
+      VectorType::get(resultShape, sourceType.getElementType());
+  return vector::ShapeCastOp::create(rewriter, loc, resultType, slice);
+}
+
+/// Apply the combiner body to two groups of vector operands (lhs and rhs),
+/// cloning each body op with vector-typed results.
+static SmallVector<Value>
+applyCombinerToVectors(PatternRewriter &rewriter, Location loc, Block &body,
+                       ArrayRef<Value> lhs, ArrayRef<Value> rhs,
+                       ArrayRef<int64_t> resultShape) {
+  int64_t numGroups = lhs.size();
+  IRMapping mapping;
+  for (int64_t g = 0; g < numGroups; ++g) {
+    mapping.map(body.getArgument(g), lhs[g]);
+    mapping.map(body.getArgument(numGroups + g), rhs[g]);
+  }
+
+  for (Operation &bodyOp : body.without_terminator()) {
+    Operation *cloned = rewriter.clone(bodyOp, mapping);
+    for (auto [oldResult, newResult] :
+         llvm::zip(bodyOp.getResults(), cloned->getResults())) {
+      VectorType resultVecTy =
+          VectorType::get(resultShape, oldResult.getType());
+      newResult.setType(resultVecTy);
+      mapping.map(oldResult, newResult);
+    }
+  }
+
+  auto yieldOp = cast<YieldOp>(body.getTerminator());
+  SmallVector<Value> results;
+  for (int64_t g = 0; g < numGroups; ++g) {
+    results.push_back(mapping.lookupOrDefault(yieldOp.getOperand(g)));
+  }
+  return results;
+}
+
+/// Inline a small associative_reduce by extracting slices along the reduction
+/// dims and folding them with cloned combiner ops. This is the key
+/// canonicalization for the distribution combine step, where values are stacked
+/// into a dim of size 2 and then reduced.
+struct InlineSmallReduce final : OpRewritePattern<AssociativeReduceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AssociativeReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    ArrayRef<int64_t> reductionDims = op.getReductionDims();
+    if (reductionDims.empty()) {
+      return failure();
+    }
+
+    VectorType inputType = op.getInputType();
+    for (int64_t d : reductionDims) {
+      int64_t size = inputType.getDimSize(d);
+      if (ShapedType::isDynamic(size) || size > kMaxInlineReductionSize) {
+        return failure();
+      }
+    }
+
+    Location loc = op.getLoc();
+    int64_t numGroups = op.getNumOperandGroups();
+    Block &body = op.getCombiner().front();
+
+    // Reduce one dim at a time, from highest to lowest (to keep indices
+    // stable).
+    SmallVector<Value> current(op.getInputs());
+    for (int64_t ri = reductionDims.size() - 1; ri >= 0; --ri) {
+      int64_t dim = reductionDims[ri];
+      // Adjust for dims already removed above this one.
+      int64_t adjustedDim = dim;
+      for (int64_t rj = ri + 1; rj < static_cast<int64_t>(reductionDims.size());
+           ++rj) {
+        if (reductionDims[rj] > dim) {
+          break;
+        }
+        --adjustedDim;
+      }
+
+      auto curType = cast<VectorType>(current[0].getType());
+      int64_t dimSize = curType.getDimSize(adjustedDim);
+
+      // Extract slice at index 0 as initial accumulator.
+      SmallVector<Value> acc(numGroups);
+      for (int64_t g = 0; g < numGroups; ++g) {
+        acc[g] =
+            extractSliceAlongDim(rewriter, loc, current[g], adjustedDim, 0);
+      }
+
+      // Compute result shape after removing this dim.
+      SmallVector<int64_t> resultShape;
+      for (int64_t i = 0, e = curType.getRank(); i < e; ++i) {
+        if (i != adjustedDim) {
+          resultShape.push_back(curType.getDimSize(i));
+        }
+      }
+
+      // Left-fold remaining slices.
+      for (int64_t i = 1; i < dimSize; ++i) {
+        SmallVector<Value> slices(numGroups);
+        for (int64_t g = 0; g < numGroups; ++g) {
+          slices[g] =
+              extractSliceAlongDim(rewriter, loc, current[g], adjustedDim, i);
+        }
+        acc = applyCombinerToVectors(rewriter, loc, body, acc, slices,
+                                     resultShape);
+      }
+
+      current = acc;
+    }
+
+    rewriter.replaceOp(op, current);
+    return success();
+  }
+};
+
+void AssociativeReduceOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<FoldZeroDimReduce, InlineSmallReduce>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// AssociativeScanOp canonicalization
+//===----------------------------------------------------------------------===//
+
+/// Fold zero-dim scan to identity: when reduction_dims is empty, the result
+/// equals the input.
+struct FoldZeroDimScan final : OpRewritePattern<AssociativeScanOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AssociativeScanOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getReductionDims().empty()) {
+      return failure();
+    }
+    rewriter.replaceOp(op, op.getInputs());
+    return success();
+  }
+};
+
+void AssociativeScanOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                    MLIRContext *context) {
+  results.add<FoldZeroDimScan>(context);
 }
 
 // clang-format off

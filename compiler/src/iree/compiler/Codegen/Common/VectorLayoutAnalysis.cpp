@@ -223,6 +223,23 @@ void LayoutAnalysis::propagateOneForward(Value val,
       }
     }
 
+    if (auto reduceOp = dyn_cast<AssociativeReduceOp>(user)) {
+      SmallVector<bool> reductionMask = reduceOp.getReductionMask();
+      VectorLayoutInterface reduceLayout = layout.project(reductionMask);
+      for (OpResult result : reduceOp.getResults()) {
+        setLayoutIfUnset(result, reduceLayout);
+      }
+      continue;
+    }
+
+    if (auto scanOp = dyn_cast<AssociativeScanOp>(user)) {
+      // Scan preserves shape, so output layout = input layout.
+      for (OpResult result : scanOp.getResults()) {
+        setLayoutIfUnset(result, layout);
+      }
+      continue;
+    }
+
     if (auto transpose = dyn_cast<vector::TransposeOp>(user)) {
       if (transpose.getVector() == val) {
         addCandidate(transpose.getResult(),
@@ -358,6 +375,15 @@ void LayoutAnalysis::fixupOp(Operation *op) {
   if (auto multiReduce = dyn_cast<vector::MultiDimReductionOp>(op)) {
     VectorLayoutInterface layout = getResolvedLayout(multiReduce.getResult());
     setLayoutOrClone(&multiReduce.getAccMutable(), layout);
+    return;
+  }
+
+  // associative_scan: result layout -> inputs get same layout (shape preserved).
+  if (auto scanOp = dyn_cast<AssociativeScanOp>(op)) {
+    VectorLayoutInterface layout = getResolvedLayout(scanOp->getResult(0));
+    for (OpOperand &operand : scanOp.getInputsMutable()) {
+      setLayoutOrClone(&operand, layout);
+    }
     return;
   }
 
