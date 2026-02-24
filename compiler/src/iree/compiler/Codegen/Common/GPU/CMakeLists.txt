@@ -74,6 +74,7 @@ iree_cc_library(
     "GPUInferMemorySpace.cpp"
     "GPUMultiBuffering.cpp"
     "GPUNestedLayoutDistributionPatterns.cpp"
+    "GPUNestedLayoutDistributionReductionPatterns.cpp"
     "GPUPackToIntrinsics.cpp"
     "GPUPadConvs.cpp"
     "GPUPadOperands.cpp"
