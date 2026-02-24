@@ -788,7 +788,8 @@ LogicalResult YieldOp::verify() {
     return verifyYieldForAssociativeOp(*this, getElemTypes(scanOp.getInputs()));
   }
 
-  llvm_unreachable("ParentOneOf trait should have rejected this");
+  assert(false && "ParentOneOf trait should have rejected this");
+  return failure();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1113,7 +1114,9 @@ struct FoldZeroDimReduce final : OpRewritePattern<AssociativeReduceOp> {
 };
 
 /// Maximum size of a reduction dimension that will be inlined by the
-/// InlineSmallReduce canonicalization. Keeps code size bounded.
+/// InlineSmallReduce/InlineSmallScan canonicalization. Keeps code size bounded.
+/// In practice, the distribution combine step stacks into dims of size 2, so
+/// this primarily handles small dimensions (2-8) produced during lowering.
 static constexpr int64_t kMaxInlineReductionSize = 8;
 
 /// Extract a slice at position `idx` along dimension `dim`, removing that
@@ -1147,6 +1150,10 @@ static Value extractSliceAlongDim(PatternRewriter &rewriter, Location loc,
 
 /// Apply the combiner body to two groups of vector operands (lhs and rhs),
 /// cloning each body op with vector-typed results.
+/// Assumption: all combiner body ops are element-wise (e.g., arith ops) and
+/// can be vectorized by widening result types.
+/// TODO: Unify with cloneCombinerVectorized in
+/// GPUNestedLayoutDistributionReductionPatterns.cpp.
 static SmallVector<Value>
 applyCombinerToVectors(PatternRewriter &rewriter, Location loc, Block &body,
                        ArrayRef<Value> lhs, ArrayRef<Value> rhs,

@@ -378,6 +378,15 @@ void LayoutAnalysis::fixupOp(Operation *op) {
     return;
   }
 
+  // AssociativeReduceOp: backward propagation is intentionally a no-op.
+  // The result has fewer dims than the source (reduction dims removed), so
+  // we cannot derive a unique source layout from the result layout. Unlike
+  // MultiDimReductionOp, there is no accumulator to back-propagate to.
+  // Forward propagation (project) handles the source→result direction.
+  if (isa<AssociativeReduceOp>(op)) {
+    return;
+  }
+
   // associative_scan: result layout -> inputs get same layout (shape preserved).
   if (auto scanOp = dyn_cast<AssociativeScanOp>(op)) {
     VectorLayoutInterface layout = getResolvedLayout(scanOp->getResult(0));
