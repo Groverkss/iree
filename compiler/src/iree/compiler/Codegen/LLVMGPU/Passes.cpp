@@ -118,6 +118,12 @@ static llvm::cl::opt<bool> clPatchFuncOps(
         "used with `--iree-codegen-debug-patched-func-ops-file-name`."),
     llvm::cl::init(false), llvm::cl::Hidden);
 
+static llvm::cl::opt<bool> clLLVMGPUUsePackLayouts(
+    "iree-llvmgpu-use-pack-layouts",
+    llvm::cl::desc("Use PackLayout and distribution instead of "
+                   "NestedLayout in the vector distribute pipeline"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> clLLVMGPUEnableSmallFloatEmulation(
     "iree-llvmgpu-enable-small-float-emulation",
     llvm::cl::desc(
@@ -823,7 +829,12 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   // Set anchors at tensor level for vector distribution later and hoist out
   // loop invariant anchors.
   funcPassManager.addPass(createDecomposeHorizontallyFusedGemmsPass());
-  funcPassManager.addPass(createLLVMGPUConfigureTensorLayoutsPass());
+  {
+    LLVMGPUConfigureTensorLayoutsPassOptions configLayoutOpts;
+    configLayoutOpts.usePackLayouts = clLLVMGPUUsePackLayouts;
+    funcPassManager.addPass(
+        createLLVMGPUConfigureTensorLayoutsPass(configLayoutOpts));
+  }
   // TODO: Move this pass before layout configuration. We want to do that,
   // but it requires some additional work to figure out the layout conflicting
   // for attention matmuls.
@@ -854,7 +865,11 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(createHoistStaticallyBoundAllocationsPass());
 
   // Vector SIMD -> Vector SIMT
-  funcPassManager.addPass(createLLVMGPUVectorDistributePass());
+  if (clLLVMGPUUsePackLayouts) {
+    funcPassManager.addPass(createGPUCuteVectorDistributionPass());
+  } else {
+    funcPassManager.addPass(createLLVMGPUVectorDistributePass());
+  }
   funcPassManager.addPass(IREE::LinalgExt::createDecomposeMapStorePass());
   funcPassManager.addPass(IREE::GPU::createUnrollToIntrinsicsPass());
   funcPassManager.addPass(IREE::GPU::createLowerIREEGPUOpsPass());

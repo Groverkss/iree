@@ -8,6 +8,7 @@
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUDialect.h"
 #include "iree/compiler/Codegen/Dialect/GPU/TargetUtils/ConfigUtils.h"
+#include "iree/compiler/Codegen/Dialect/Map/IR/IREEMapDialect.h"
 #include "iree/compiler/Codegen/Dialect/VectorExt/IR/VectorExtDialect.h"
 #include "iree/compiler/Codegen/LLVMGPU/Passes.h"
 #include "iree/compiler/Dialect/HAL/IR/HALDialect.h"
@@ -47,7 +48,8 @@ public:
   void getDependentDialects(DialectRegistry &registry) const override {
     // clang-format off
     registry
-        .insert<IREE::HAL::HALDialect,
+        .insert<IREE::Map::IREEMapDialect,
+                IREE::HAL::HALDialect,
                 IREE::GPU::IREEGPUDialect,
                 IREE::LinalgExt::IREELinalgExtDialect,
                 IREE::VectorExt::IREEVectorExtDialect,

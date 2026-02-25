@@ -14,6 +14,7 @@
 #include "iree/compiler/Codegen/Common/Passes.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenDialect.h"
+#include "iree/compiler/Codegen/Dialect/Cute/IR/IREECuTeDialect.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUDialect.h"
 #include "iree/compiler/Codegen/Dialect/GPU/TargetUtils/KnownTargets.h"
@@ -468,6 +469,7 @@ public:
     mlir::registerLLVMDialectTranslation(registry);
     mlir::registerROCDLDialectTranslation(registry);
     registry.insert<IREE::Codegen::IREECodegenDialect>();
+    registry.insert<IREE::CuTe::IREECuTeDialect>();
     registry.insert<IREE::VectorExt::IREEVectorExtDialect>();
     registry.insert<IREE::GPU::IREEGPUDialect>();
     registry.insert<IREE::ROCM::ROCMDialect>();

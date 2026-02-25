@@ -5,9 +5,11 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "compiler/src/iree/compiler/Codegen/LLVMGPU/Utils/LLVMGPUUtils.h"
+#include "iree/compiler/Codegen/Common/GPU/Cute/CuteDistributionUtils.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/GPULoweringConfigUtils.h"
 #include "iree/compiler/Codegen/Dialect/GPU/IR/IREEGPUAttrs.h"
+#include "iree/compiler/Codegen/Dialect/Map/IR/IREEMapDialect.h"
 #include "iree/compiler/Codegen/Dialect/VectorExt/IR/VectorExtDialect.h"
 #include "iree/compiler/Codegen/LLVMGPU/Passes.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -141,6 +143,24 @@ static LogicalResult distributeTilingSizes(Operation *candidate,
   return success();
 }
 
+/// Create either a NestedLayout or PackLayout layout from the same parameters.
+static VectorLayoutInterface
+createLayout(MLIRContext *ctx, bool usePackLayouts, int64_t subgroupSize,
+             ArrayRef<int64_t> subgroupTile, ArrayRef<int64_t> batchTile,
+             ArrayRef<int64_t> outerTile, ArrayRef<int64_t> threadTile,
+             ArrayRef<int64_t> elementTile, ArrayRef<int64_t> subgroupStrides,
+             ArrayRef<int64_t> threadStrides) {
+  if (usePackLayouts) {
+    auto packLayout = buildPackLayout(ctx, subgroupTile, batchTile, outerTile,
+                                      threadTile, elementTile, subgroupStrides,
+                                      threadStrides, subgroupSize);
+    return cast<VectorLayoutInterface>(cast<Attribute>(packLayout));
+  }
+  return NestedLayoutAttr::get(ctx, subgroupTile, batchTile, outerTile,
+                               threadTile, elementTile, subgroupStrides,
+                               threadStrides);
+}
+
 struct ContractionLayout {
   VectorLayoutInterface lhs;
   VectorLayoutInterface rhs;
@@ -154,7 +174,8 @@ struct ContractionLayout {
 // contraction and a single accumulator.
 static FailureOr<ContractionLayout>
 getContractionLayout(Operation *candidate, ArrayRef<int64_t> bounds,
-                     ArrayRef<AffineMap> contractIndexingMaps) {
+                     ArrayRef<AffineMap> contractIndexingMaps,
+                     bool usePackLayouts, int64_t subgroupSizeVal) {
   auto config = getLoweringConfig<IREE::GPU::LoweringConfigAttr>(candidate);
   if (!config) {
     return failure();
@@ -228,9 +249,10 @@ getContractionLayout(Operation *candidate, ArrayRef<int64_t> bounds,
     // Get the fragment layout for the entire iteration space and then project
     // it. This is significantly easier than trying to create a layout for each
     // fragment itself.
-    auto fragmentSpaceLayout = NestedLayoutAttr::get(
-        map.getContext(), subgroupCounts, batchCounts, outerCounts,
-        threadCounts, elementCounts, subgroupStrides, threadStrides);
+    auto fragmentSpaceLayout =
+        createLayout(map.getContext(), usePackLayouts, subgroupSizeVal,
+                     subgroupCounts, batchCounts, outerCounts, threadCounts,
+                     elementCounts, subgroupStrides, threadStrides);
     return fragmentSpaceLayout.apply(map);
   };
 
@@ -259,14 +281,16 @@ SmallVector<int64_t> getIterationSpaceBounds(linalg::LinalgOp linalgOp) {
 static LogicalResult
 setContractionAnchor(IREE::Codegen::InnerTileDescAttrInterface intrinsic,
                      SmallVector<bool> promotedOperands, RewriterBase &rewriter,
-                     linalg::LinalgOp contract) {
+                     linalg::LinalgOp contract, bool usePackLayouts,
+                     int64_t subgroupSize) {
   // This function should have only be called on a contraction op.
   assert(linalg::isaContractionOpInterface(contract) &&
          "cannot set contraction anchor on non contraction op");
 
   SmallVector<int64_t> bounds = getIterationSpaceBounds(contract);
   auto layouts =
-      getContractionLayout(contract, bounds, contract.getIndexingMapsArray());
+      getContractionLayout(contract, bounds, contract.getIndexingMapsArray(),
+                           usePackLayouts, subgroupSize);
   if (failed(layouts)) {
     return contract->emitError("cannot get concrete layout for contraction");
   }
@@ -315,7 +339,8 @@ setContractionAnchor(IREE::Codegen::InnerTileDescAttrInterface intrinsic,
 
 static LogicalResult setDerivedThreadConfigLayout(
     IREE::GPU::DerivedThreadConfigAttr config, linalg::LinalgOp linalgOp,
-    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter) {
+    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter,
+    bool usePackLayouts, int64_t subgroupSize) {
 
   int64_t opRank = linalgOp.getNumLoops();
 
@@ -380,9 +405,9 @@ static LogicalResult setDerivedThreadConfigLayout(
   SmallVector<int64_t> outerTile(opRank, 1);
 
   MLIRContext *context = rewriter.getContext();
-  auto layout = IREE::VectorExt::NestedLayoutAttr::get(
-      context, subgroupTile, opShape, outerTile, threadTile, elementTile,
-      subgroupStrides, threadStrides);
+  auto layout = createLayout(context, usePackLayouts, subgroupSize,
+                             subgroupTile, opShape, outerTile, threadTile,
+                             elementTile, subgroupStrides, threadStrides);
 
   Location loc = linalgOp.getLoc();
 
@@ -399,14 +424,16 @@ static LogicalResult setDerivedThreadConfigLayout(
 
 static LogicalResult setIntrinsicLoweringConfigLayout(
     IREE::GPU::LoweringConfigAttr config, linalg::LinalgOp candidate,
-    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter) {
+    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter,
+    bool usePackLayouts, int64_t subgroupSize) {
 
   SmallVector<bool> promotedOperands = getPromotedOperands(candidate);
   IREE::Codegen::InnerTileDescAttrInterface intrinsic = getIntrinsic(candidate);
 
   if (linalg::isaContractionOpInterface(candidate)) {
     if (succeeded(setContractionAnchor(intrinsic, promotedOperands, rewriter,
-                                       candidate))) {
+                                       candidate, usePackLayouts,
+                                       subgroupSize))) {
       return success();
     }
   }
@@ -419,7 +446,8 @@ static LogicalResult setIntrinsicLoweringConfigLayout(
 
 static LogicalResult setGPULoweringConfigLayout(
     IREE::GPU::LoweringConfigAttr config, linalg::LinalgOp candidate,
-    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter) {
+    ArrayRef<int64_t> workgroupSize, RewriterBase &rewriter,
+    bool usePackLayouts, int64_t subgroupSize) {
   MLIRContext *context = config.getContext();
   Location loc = candidate.getLoc();
 
@@ -455,9 +483,10 @@ static LogicalResult setGPULoweringConfigLayout(
   ArrayRef<int64_t> batchTile = bounds;
   SmallVector<int64_t> outerTile(bounds.size(), 1);
 
-  auto layout = IREE::VectorExt::NestedLayoutAttr::get(
-      context, subgroupSizes, batchTile, outerTile, threadSizes,
-      elementTile.value(), subgroupStrides, threadStrides);
+  auto layout =
+      createLayout(context, usePackLayouts, subgroupSize, subgroupSizes,
+                   batchTile, outerTile, threadSizes, elementTile.value(),
+                   subgroupStrides, threadStrides);
 
   SmallVector<bool> promotedOperands = getPromotedOperands(candidate);
 
@@ -487,11 +516,8 @@ static LogicalResult setGPULoweringConfigLayout(
 struct LLVMGPUConfigureTensorLayoutsPass final
     : impl::LLVMGPUConfigureTensorLayoutsPassBase<
           LLVMGPUConfigureTensorLayoutsPass> {
-
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<IREE::VectorExt::IREEVectorExtDialect>();
-    registry.insert<vector::VectorDialect>();
-  }
+  using impl::LLVMGPUConfigureTensorLayoutsPassBase<
+      LLVMGPUConfigureTensorLayoutsPass>::LLVMGPUConfigureTensorLayoutsPassBase;
 
   void runOnOperation() override {
     mlir::FunctionOpInterface funcOp = getOperation();
@@ -505,15 +531,27 @@ struct LLVMGPUConfigureTensorLayoutsPass final
       return signalPassFailure();
     }
 
+    int64_t subgroupSize = 0;
+    if (usePackLayouts) {
+      std::optional<int64_t> maybeSgSize = getSubgroupSize(funcOp);
+      if (!maybeSgSize) {
+        funcOp->emitOpError()
+            << "unable to query subgroup_size for PackLayout generation";
+        return signalPassFailure();
+      }
+      subgroupSize = *maybeSgSize;
+    }
+
     if (failed(setLayoutsFromLoweringConfig(funcOp, maybeWorkgroupSize.value(),
-                                            rewriter))) {
+                                            rewriter, subgroupSize))) {
       return signalPassFailure();
     }
   }
 
   LogicalResult setLayoutsFromLoweringConfig(FunctionOpInterface funcOp,
                                              ArrayRef<int64_t> workgroupSize,
-                                             RewriterBase &rewriter) {
+                                             RewriterBase &rewriter,
+                                             int64_t subgroupSize) {
     SmallVector<linalg::LinalgOp> candidates;
     funcOp->walk([&](linalg::LinalgOp op) {
       if (getLoweringConfig(op)) {
@@ -526,16 +564,19 @@ struct LLVMGPUConfigureTensorLayoutsPass final
           TypeSwitch<IREE::Codegen::LoweringConfigAttrInterface, LogicalResult>(
               getLoweringConfig(candidate))
               .Case([&](IREE::GPU::DerivedThreadConfigAttr config) {
-                return setDerivedThreadConfigLayout(config, candidate,
-                                                    workgroupSize, rewriter);
+                return setDerivedThreadConfigLayout(
+                    config, candidate, workgroupSize, rewriter, usePackLayouts,
+                    subgroupSize);
               })
               .Case([&](IREE::GPU::LoweringConfigAttr config) {
                 if (getMmaKind(config)) {
                   return setIntrinsicLoweringConfigLayout(
-                      config, candidate, workgroupSize, rewriter);
+                      config, candidate, workgroupSize, rewriter,
+                      usePackLayouts, subgroupSize);
                 }
                 return setGPULoweringConfigLayout(config, candidate,
-                                                  workgroupSize, rewriter);
+                                                  workgroupSize, rewriter,
+                                                  usePackLayouts, subgroupSize);
               })
               .Default(failure());
 

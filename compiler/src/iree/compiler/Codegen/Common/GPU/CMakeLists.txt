@@ -44,11 +44,19 @@ iree_cc_library(
   NAME
     CommonGPUPasses
   HDRS
+    "Cute/CuteDistributionUtils.h"
+    "Cute/CutePatterns.h"
     "GPUPatterns.h"
     "GPUVectorDistribution.h"
     "Passes.h"
   SRCS
     "AMDGPULowerCoalescedDMAToGatherLDS.cpp"
+    "Cute/CuteDistributeGenericOps.cpp"
+    "Cute/CuteDistributeInnerTiledOps.cpp"
+    "Cute/CuteDistributeMemoryOps.cpp"
+    "Cute/CuteDistributeReductionOps.cpp"
+    "Cute/CuteDistributionUtils.cpp"
+    "Cute/CuteVectorDistribution.cpp"
     "DecomposeHorizontallyFusedGemms.cpp"
     "ExpandGPUOps.cpp"
     "GPUAllocPrivateMemoryForDPSOps.cpp"
@@ -149,6 +157,7 @@ iree_cc_library(
     iree::compiler::Codegen::Dialect::Codegen::Utils
     iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
     iree::compiler::Codegen::Dialect::GPU::Transforms::GPUTransforms
+    iree::compiler::Codegen::Dialect::Map::IR::IREEMapDialect
     iree::compiler::Codegen::Dialect::PCF::IR
     iree::compiler::Codegen::Dialect::PCF::Transforms
     iree::compiler::Codegen::Dialect::VectorExt::IR::IREEVectorExtDialect

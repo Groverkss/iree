@@ -55,6 +55,7 @@ iree_cc_library(
     MLIRTargetLLVMIRExport
     iree::compiler::Codegen::Common
     iree::compiler::Codegen::Dialect::Codegen::IR::IREECodegenDialect
+    iree::compiler::Codegen::Dialect::Cute::IR::IREECuTeDialect
     iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
     iree::compiler::Codegen::Dialect::GPU::TargetUtils::KnownTargets
     iree::compiler::Codegen::Dialect::VectorExt::IR::IREEVectorExtDialect

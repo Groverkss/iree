@@ -115,6 +115,20 @@ def GPUDistributePass :
   ];
 }
 
+def GPUCuteVectorDistributionPass :
+    InterfacePass<"iree-codegen-gpu-cute-vector-distribution", "mlir::FunctionOpInterface"> {
+  let summary = "Distribute vector ops using PackLayout TV layouts.";
+  let dependentDialects = [
+    "::mlir::affine::AffineDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+    "::mlir::iree_compiler::IREE::VectorExt::IREEVectorExtDialect",
+  ];
+}
+
 def GPUDistributeSharedMemoryCopyPass :
     InterfacePass<"iree-codegen-gpu-distribute-shared-memory-copy", "mlir::FunctionOpInterface"> {
   let summary = "Pass to distribute shared memory copies to threads.";
