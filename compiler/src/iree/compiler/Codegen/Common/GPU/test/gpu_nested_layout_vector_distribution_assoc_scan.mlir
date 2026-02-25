@@ -29,14 +29,14 @@ builtin.module attributes { transform.with_named_sequence } {
   }
 }
 
-// Dim 1 layout: batch=2, outer=1, thread=4, element=4 → merged local scan dim = 8
-// Thread scan: thread_tile[1]=4, stride=16, width=64 → 2 Hillis-Steele rounds
+// Dim 1 layout: batch=2, outer=1, thread=4, element=4 -> merged local scan dim = 8
+// Thread scan: thread_tile[1]=4, stride=16, width=64 -> 2 Hillis-Steele rounds
 // CHECK-LABEL: func @assoc_scan_addf_dim1
 // CHECK-DAG: %[[DARG0:.*]] = iree_vector_ext.to_simt %{{.*}} : vector<32x32xf32> -> vector<2x2x1x1x1x4xf32>
-//     Local scan: shape_cast to merge scan tiers, inlined scan (8 steps), shape_cast back
+//     Local scan: shape_cast to merge scan tiers, associative_scan, shape_cast back
 // CHECK: vector.shape_cast %[[DARG0]] : vector<2x2x1x1x1x4xf32> to vector<2x1x1x8xf32>
-// CHECK: arith.addf {{.*}} : vector<2x1x1xf32>
-// CHECK: vector.insert_strided_slice
+// CHECK: iree_vector_ext.associative_scan
+// CHECK: vector.shape_cast {{.*}} : vector<2x1x1x8xf32> to vector<2x2x1x1x1x4xf32>
 //     Thread scan: Hillis-Steele shuffle up
 // CHECK: gpu.shuffle up %{{.*}}, %{{.*}}, %{{.*}} : f32
 // CHECK: arith.addf
@@ -79,17 +79,16 @@ builtin.module attributes { transform.with_named_sequence } {
   }
 }
 
-// Dim 0 layout: batch=2, outer=1, thread=16, element=1 → merged local scan dim = 2
-// Thread scan: thread_tile[0]=16, stride=1, width=16 → 4 Hillis-Steele rounds
+// Dim 0 layout: batch=2, outer=1, thread=16, element=1 -> merged local scan dim = 2
+// Thread scan: thread_tile[0]=16, stride=1, width=16 -> 4 Hillis-Steele rounds
 // CHECK-LABEL: func @assoc_scan_maximumf_dim0
-//     Local scan: transpose to group scan tiers at end, merge to dim-2, scan, split, transpose back
+//     Local scan: transpose to group scan tiers at end, merge, scan, split, transpose back
 // CHECK: vector.transpose
 // CHECK: vector.shape_cast
-// CHECK: arith.maximumf
-// CHECK: vector.insert_strided_slice
+// CHECK: iree_vector_ext.associative_scan
 // CHECK: vector.shape_cast
 // CHECK: vector.transpose
-//     Thread scan: 4 rounds (offsets 1, 2, 4, 8 with width 16)
+//     Thread scan: shuffle up rounds
 // CHECK: gpu.shuffle up %{{.*}}, %{{.*}}, %{{.*}} : f32
 // CHECK: arith.maximumf
 // CHECK: arith.select

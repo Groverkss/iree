@@ -485,7 +485,6 @@ def IREEVectorExt_AssociativeReduceOp : IREEVectorExt_PureOp<"associative_reduce
     `->` type($results)
   }];
   let hasVerifier = 1;
-  let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
     int64_t getNumOperandGroups() {
@@ -553,7 +552,6 @@ def IREEVectorExt_AssociativeScanOp : IREEVectorExt_PureOp<"associative_scan", [
     `->` type($results)
   }];
   let hasVerifier = 1;
-  let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
     int64_t getNumOperandGroups() {

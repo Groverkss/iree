@@ -655,7 +655,6 @@ SmallVector<Value> cloneCombinerScalar(PatternRewriter &rewriter, Location loc,
 /// Body ops are cloned with result types widened to vectors.
 /// Assumption: all combiner body ops are element-wise (e.g., arith ops) and
 /// can be vectorized by widening result types.
-/// TODO: Unify with applyCombinerToVectors in VectorExtOps.cpp.
 SmallVector<Value> cloneCombinerVectorized(PatternRewriter &rewriter,
                                            Location loc, Block &body,
                                            ArrayRef<Value> lhs,
