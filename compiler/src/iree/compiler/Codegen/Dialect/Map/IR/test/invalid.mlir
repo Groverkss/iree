@@ -40,3 +40,11 @@ func.func @non_congruent_shape_nested() attributes {layout = #iree_map.pack_map<
 func.func @bare_integer() attributes {layout = #iree_map.pack_map<4 : 2>} {
   return
 }
+
+// -----
+
+// PackLayoutAttr delegates validation to PackMapAttr.
+// expected-error @+1 {{shape leaf values must be positive, got 0}}
+func.func @pack_layout_zero_shape() attributes {layout = #iree_map.pack_layout<(0, 8) : (1, 4)>} {
+  return
+}

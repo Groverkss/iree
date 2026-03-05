@@ -698,6 +698,64 @@ PackMapAttr PackMapAttr::makeIdentity(MLIRContext *ctx,
 }
 
 //===----------------------------------------------------------------------===//
+// PackLayoutAttr — parsing/printing
+//===----------------------------------------------------------------------===//
+
+Attribute PackLayoutAttr::parse(AsmParser &parser, Type type) {
+  if (failed(parser.parseLess())) {
+    return {};
+  }
+
+  auto shape = parseIntTuple(parser);
+  if (failed(shape)) {
+    return {};
+  }
+
+  if (failed(parser.parseColon())) {
+    return {};
+  }
+
+  auto stride = parseIntTuple(parser);
+  if (failed(stride)) {
+    return {};
+  }
+
+  if (failed(parser.parseGreater())) {
+    return {};
+  }
+
+  // Validate via PackMapAttr::getChecked to emit diagnostics on invalid input
+  // instead of asserting.
+  auto map = PackMapAttr::getChecked(
+      [&] { return parser.emitError(parser.getCurrentLocation()); },
+      parser.getContext(), *shape, *stride);
+  if (!map) {
+    return {};
+  }
+  return PackLayoutAttr::get(parser.getContext(), map);
+}
+
+void PackLayoutAttr::print(AsmPrinter &printer) const {
+  printer << "<";
+  printIntTuple(printer, getMap().getShape());
+  printer << " : ";
+  printIntTuple(printer, getMap().getStride());
+  printer << ">";
+}
+
+//===----------------------------------------------------------------------===//
+// PackLayoutAttr — mode operations
+//===----------------------------------------------------------------------===//
+
+PackLayoutAttr PackLayoutAttr::permute(ArrayRef<int64_t> perm) {
+  return PackLayoutAttr::get(getContext(), getMap().permute(perm));
+}
+
+PackLayoutAttr PackLayoutAttr::project(ArrayRef<bool> droppedDims) {
+  return PackLayoutAttr::get(getContext(), getMap().project(droppedDims));
+}
+
+//===----------------------------------------------------------------------===//
 // Dialect attribute registration
 //===----------------------------------------------------------------------===//
 
