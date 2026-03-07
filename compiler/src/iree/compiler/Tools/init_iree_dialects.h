@@ -44,6 +44,7 @@ inline void registerIreeDialects(DialectRegistry &registry) {
   // clang-format off
   registry.insert<IREE::CPU::IREECPUDialect,
                   IREE::Codegen::IREECodegenDialect,
+                  IREE::Map::IREEMapDialect,
                   IREE::Flow::FlowDialect,
                   IREE::GPU::IREEGPUDialect,
                   IREE::Map::IREEMapDialect,

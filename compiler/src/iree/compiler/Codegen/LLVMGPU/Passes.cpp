@@ -14,6 +14,7 @@
 #include "iree/compiler/Codegen/Common/Passes.h"
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/Dialect/GPU/Transforms/Passes.h"
+#include "iree/compiler/Codegen/Dialect/Map/Transforms/Passes.h"
 #include "iree/compiler/Codegen/Dialect/VectorExt/Transforms/Passes.h"
 #include "iree/compiler/Codegen/LLVMGPU/Passes.h"
 #include "iree/compiler/Codegen/LLVMGPU/ROCDLPasses.h"
@@ -117,6 +118,12 @@ static llvm::cl::opt<bool> clPatchFuncOps(
         "Perform the patches on func ops for debugging purpose. It should be "
         "used with `--iree-codegen-debug-patched-func-ops-file-name`."),
     llvm::cl::init(false), llvm::cl::Hidden);
+
+static llvm::cl::opt<bool> clLLVMGPUUsePackLayouts(
+    "iree-llvmgpu-use-pack-layouts",
+    llvm::cl::desc("Use PackLayout and distribution instead of "
+                   "NestedLayout in the vector distribute pipeline"),
+    llvm::cl::init(false));
 
 static llvm::cl::opt<bool> clLLVMGPUEnableSmallFloatEmulation(
     "iree-llvmgpu-enable-small-float-emulation",
@@ -823,7 +830,12 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   // Set anchors at tensor level for vector distribution later and hoist out
   // loop invariant anchors.
   funcPassManager.addPass(createDecomposeHorizontallyFusedGemmsPass());
-  funcPassManager.addPass(createLLVMGPUConfigureTensorLayoutsPass());
+  {
+    LLVMGPUConfigureTensorLayoutsPassOptions configLayoutOpts;
+    configLayoutOpts.usePackLayouts = clLLVMGPUUsePackLayouts;
+    funcPassManager.addPass(
+        createLLVMGPUConfigureTensorLayoutsPass(configLayoutOpts));
+  }
   // TODO: Move this pass before layout configuration. We want to do that,
   // but it requires some additional work to figure out the layout conflicting
   // for attention matmuls.
@@ -854,7 +866,11 @@ void addGPUVectorDistributePassPipeline(OpPassManager &funcPassManager,
   funcPassManager.addPass(createHoistStaticallyBoundAllocationsPass());
 
   // Vector SIMD -> Vector SIMT
-  funcPassManager.addPass(createLLVMGPUVectorDistributePass());
+  if (clLLVMGPUUsePackLayouts) {
+    funcPassManager.addPass(IREE::Map::createGPUMapVectorDistributionPass());
+  } else {
+    funcPassManager.addPass(createLLVMGPUVectorDistributePass());
+  }
   funcPassManager.addPass(IREE::LinalgExt::createDecomposeMapStorePass());
   funcPassManager.addPass(IREE::GPU::createUnrollToIntrinsicsPass());
   funcPassManager.addPass(IREE::GPU::createLowerIREEGPUOpsPass());

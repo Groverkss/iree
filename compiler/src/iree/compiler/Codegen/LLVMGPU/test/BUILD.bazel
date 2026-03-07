@@ -38,6 +38,7 @@ iree_lit_test_suite(
             "create_async_groups.mlir",
             "create_tile_sizes.mlir",
             "custom_pass_pipeline.mlir",
+            "cute_configure_tensor_layout.mlir",
             "distribute_to_thread.mlir",
             "elementwise_pipeline.mlir",
             "extract_address_computation_gpu.mlir",

@@ -82,6 +82,7 @@ struct LinalgGenericHoistableRegionModel final
 void registerCodegenInterfaces(DialectRegistry &registry) {
   registerProcessorOpInterfaceExternalModels(registry);
   registerCodegenExternalInterfaces(registry);
+  registerIREEMapExternalInterfaces(registry);
   registerIREEGPUExternalInterfaces(registry);
   registerIREEMapExternalInterfaces(registry);
   registerPCFExternalInterfaces(registry);

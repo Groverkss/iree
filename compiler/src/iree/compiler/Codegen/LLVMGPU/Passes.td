@@ -56,6 +56,15 @@ def LLVMGPUCastAddressSpaceFunctionPass :
 def LLVMGPUConfigureTensorLayoutsPass :
     InterfacePass<"iree-llvmgpu-configure-tensor-layouts", "mlir::FunctionOpInterface"> {
   let summary = "Pass to set layouts on tensors for later vector distribution";
+  let dependentDialects = [
+    "IREE::Map::IREEMapDialect",
+    "IREE::VectorExt::IREEVectorExtDialect",
+    "vector::VectorDialect",
+  ];
+  let options = [
+    Option<"usePackLayouts", "use-pack-layouts", "bool", "false",
+           "Emit PackLayout instead of NestedLayout">
+  ];
 }
 
 def LLVMGPULinkExecutablesPass :
