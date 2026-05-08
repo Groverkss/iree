@@ -6,7 +6,11 @@
 
 #include "iree/hal/drivers/amdgpu/executable.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 #include "iree/base/internal/debugging.h"
+#include "iree/base/internal/dynamic_library.h"
 #include "iree/hal/drivers/amdgpu/buffer.h"
 #include "iree/hal/drivers/amdgpu/queue_affinity.h"
 #include "iree/hal/drivers/amdgpu/util/code_object_target.h"
@@ -45,6 +49,64 @@ typedef struct iree_hal_amdgpu_agent_isa_target_t {
   // Parsed target identity borrowing processor text from |name_buffer|.
   iree_hal_amdgpu_target_id_t target_id;
 } iree_hal_amdgpu_agent_isa_target_t;
+
+typedef enum iree_hal_amdgpu_rocjitsu_status_e {
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_SUCCESS = 0,
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_ERROR = 1,
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_ARGUMENT = 2,
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_OUT_OF_RESOURCES = 3,
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_CODE_OBJECT = 4,
+  IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_FILE = 5,
+} iree_hal_amdgpu_rocjitsu_status_t;
+
+typedef enum iree_hal_amdgpu_rocjitsu_arch_e {
+  IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA3 = 2,
+  IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA4 = 3,
+  IREE_HAL_AMDGPU_ROCJITSU_ARCH_RDNA4 = 8,
+} iree_hal_amdgpu_rocjitsu_arch_t;
+
+typedef enum iree_hal_amdgpu_rocjitsu_mach_e {
+  IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX942 = 0x4c,
+  IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX950 = 0x4f,
+  IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX1200 = 0x48,
+  IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX1201 = 0x4e,
+} iree_hal_amdgpu_rocjitsu_mach_t;
+
+typedef struct iree_hal_amdgpu_rocjitsu_code_object_t
+    iree_hal_amdgpu_rocjitsu_code_object_t;
+
+typedef struct iree_hal_amdgpu_rocjitsu_dbt_options_t {
+  iree_hal_amdgpu_rocjitsu_arch_t guest_arch;
+  iree_hal_amdgpu_rocjitsu_arch_t host_arch;
+  uint32_t target_mach;
+} iree_hal_amdgpu_rocjitsu_dbt_options_t;
+
+typedef iree_hal_amdgpu_rocjitsu_status_t (
+    *iree_hal_amdgpu_rocjitsu_code_object_create_from_memory_fn_t)(
+    const void* elf_bytes, uint64_t elf_size,
+    iree_hal_amdgpu_rocjitsu_code_object_t** obj);
+typedef iree_hal_amdgpu_rocjitsu_status_t (
+    *iree_hal_amdgpu_rocjitsu_code_object_image_data_fn_t)(
+    const iree_hal_amdgpu_rocjitsu_code_object_t* obj, const uint8_t** data,
+    uint64_t* size);
+typedef void (*iree_hal_amdgpu_rocjitsu_code_object_destroy_fn_t)(
+    iree_hal_amdgpu_rocjitsu_code_object_t* obj);
+typedef iree_hal_amdgpu_rocjitsu_status_t (
+    *iree_hal_amdgpu_rocjitsu_code_translate_fn_t)(
+    const iree_hal_amdgpu_rocjitsu_code_object_t* source,
+    const iree_hal_amdgpu_rocjitsu_dbt_options_t* options,
+    iree_hal_amdgpu_rocjitsu_code_object_t** translated);
+typedef const char* (*iree_hal_amdgpu_rocjitsu_last_error_fn_t)(void);
+
+typedef struct iree_hal_amdgpu_rocjitsu_api_t {
+  iree_dynamic_library_t* library;
+  iree_hal_amdgpu_rocjitsu_code_object_create_from_memory_fn_t
+      code_object_create_from_memory;
+  iree_hal_amdgpu_rocjitsu_code_object_image_data_fn_t code_object_image_data;
+  iree_hal_amdgpu_rocjitsu_code_object_destroy_fn_t code_object_destroy;
+  iree_hal_amdgpu_rocjitsu_code_translate_fn_t code_translate;
+  iree_hal_amdgpu_rocjitsu_last_error_fn_t last_error;
+} iree_hal_amdgpu_rocjitsu_api_t;
 
 static hsa_status_t iree_hal_amdgpu_iterate_agent_isa(hsa_isa_t isa,
                                                       void* user_data) {
@@ -89,6 +151,269 @@ static iree_status_t iree_hal_amdgpu_query_agent_isa_target(
                                                name_length - /*NUL*/ 1);
   return iree_hal_amdgpu_target_id_parse_hsa_isa_name(
       out_isa_target->name, &out_isa_target->target_id);
+}
+
+static bool iree_hal_amdgpu_rocjitsu_dbt_enabled(void) {
+  const char* value = getenv("IREE_HAL_AMDGPU_ROCJITSU_DBT");
+  return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0 &&
+         strcmp(value, "false") != 0;
+}
+
+static bool iree_hal_amdgpu_rocjitsu_arch_for_target(
+    const iree_hal_amdgpu_target_id_t* target_id,
+    iree_hal_amdgpu_rocjitsu_arch_t* out_arch, uint32_t* out_mach) {
+  if (target_id->kind != IREE_HAL_AMDGPU_TARGET_KIND_EXACT) return false;
+  if (iree_string_view_equal(target_id->processor, IREE_SV("gfx942"))) {
+    if (out_arch) *out_arch = IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA3;
+    if (out_mach) *out_mach = IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX942;
+    return true;
+  } else if (iree_string_view_equal(target_id->processor, IREE_SV("gfx950"))) {
+    if (out_arch) *out_arch = IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA4;
+    if (out_mach) *out_mach = IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX950;
+    return true;
+  } else if (iree_string_view_equal(target_id->processor, IREE_SV("gfx1200"))) {
+    if (out_arch) *out_arch = IREE_HAL_AMDGPU_ROCJITSU_ARCH_RDNA4;
+    if (out_mach) *out_mach = IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX1200;
+    return true;
+  } else if (iree_string_view_equal(target_id->processor, IREE_SV("gfx1201"))) {
+    if (out_arch) *out_arch = IREE_HAL_AMDGPU_ROCJITSU_ARCH_RDNA4;
+    if (out_mach) *out_mach = IREE_HAL_AMDGPU_ROCJITSU_MACH_GFX1201;
+    return true;
+  }
+  return false;
+}
+
+static bool iree_hal_amdgpu_rocjitsu_can_translate(
+    const iree_hal_amdgpu_target_id_t* source_target_id,
+    const iree_hal_amdgpu_target_id_t* host_target_id,
+    iree_hal_amdgpu_rocjitsu_arch_t* out_guest_arch,
+    iree_hal_amdgpu_rocjitsu_arch_t* out_host_arch, uint32_t* out_target_mach) {
+  iree_hal_amdgpu_rocjitsu_arch_t guest_arch;
+  if (!iree_hal_amdgpu_rocjitsu_arch_for_target(source_target_id, &guest_arch,
+                                                /*out_mach=*/NULL)) {
+    return false;
+  }
+
+  iree_hal_amdgpu_rocjitsu_arch_t host_arch;
+  uint32_t target_mach = 0;
+  if (!iree_hal_amdgpu_rocjitsu_arch_for_target(host_target_id, &host_arch,
+                                                &target_mach)) {
+    return false;
+  }
+
+  // First test scope: compile exact CDNA4 (gfx950) and translate to either
+  // CDNA3 (gfx942) or RDNA4 (gfx1200/gfx1201) immediately before HSA load.
+  if (guest_arch != IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA4 ||
+      (host_arch != IREE_HAL_AMDGPU_ROCJITSU_ARCH_CDNA3 &&
+       host_arch != IREE_HAL_AMDGPU_ROCJITSU_ARCH_RDNA4)) {
+    return false;
+  }
+
+  if (out_guest_arch) *out_guest_arch = guest_arch;
+  if (out_host_arch) *out_host_arch = host_arch;
+  if (out_target_mach) *out_target_mach = target_mach;
+  return true;
+}
+
+static iree_status_t iree_hal_amdgpu_rocjitsu_status_to_iree(
+    const char* operation, iree_hal_amdgpu_rocjitsu_status_t status) {
+  if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_SUCCESS) {
+    return iree_ok_status();
+  }
+  iree_status_code_t status_code = IREE_STATUS_INTERNAL;
+  if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_ARGUMENT) {
+    status_code = IREE_STATUS_INVALID_ARGUMENT;
+  } else if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_OUT_OF_RESOURCES) {
+    status_code = IREE_STATUS_RESOURCE_EXHAUSTED;
+  } else if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_CODE_OBJECT) {
+    status_code = IREE_STATUS_INVALID_ARGUMENT;
+  } else if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_INVALID_FILE) {
+    status_code = IREE_STATUS_NOT_FOUND;
+  }
+  return iree_make_status(status_code, "rocjitsu %s failed with status %d",
+                          operation, (int)status);
+}
+
+static iree_status_t iree_hal_amdgpu_rocjitsu_translate_status_to_iree(
+    const iree_hal_amdgpu_rocjitsu_api_t* api,
+    iree_hal_amdgpu_rocjitsu_status_t status) {
+  if (status == IREE_HAL_AMDGPU_ROCJITSU_STATUS_SUCCESS) {
+    return iree_ok_status();
+  }
+  if (api->last_error) {
+    const char* diagnostic = api->last_error();
+    if (diagnostic && diagnostic[0] != '\0') {
+      return iree_make_status(IREE_STATUS_FAILED_PRECONDITION,
+                              "rocjitsu code object translation failed: %s",
+                              diagnostic);
+    }
+  }
+  return iree_hal_amdgpu_rocjitsu_status_to_iree("code object translation",
+                                                 status);
+}
+
+static iree_status_t iree_hal_amdgpu_rocjitsu_load_api(
+    iree_allocator_t host_allocator, iree_hal_amdgpu_rocjitsu_api_t* out_api) {
+  memset(out_api, 0, sizeof(*out_api));
+
+  const char* env_path = getenv("IREE_HAL_AMDGPU_ROCJITSU_PATH");
+  iree_status_t status = iree_ok_status();
+  if (env_path != NULL && env_path[0] != '\0') {
+    status = iree_dynamic_library_load_from_file(
+        env_path, IREE_DYNAMIC_LIBRARY_FLAG_NONE, host_allocator,
+        &out_api->library);
+  } else {
+    static const char* const library_names[] = {
+        "librocjitsu.so",
+        "rocjitsu.dll",
+        "librocjitsu.dylib",
+    };
+    for (iree_host_size_t i = 0; i < IREE_ARRAYSIZE(library_names); ++i) {
+      status = iree_dynamic_library_load_from_file(
+          library_names[i], IREE_DYNAMIC_LIBRARY_FLAG_NONE, host_allocator,
+          &out_api->library);
+      if (iree_status_is_ok(status)) break;
+      iree_status_free(status);
+      status = iree_ok_status();
+    }
+    if (out_api->library == NULL) {
+      status = iree_make_status(
+          IREE_STATUS_NOT_FOUND,
+          "rocjitsu DBT requested but librocjitsu was not found; set "
+          "IREE_HAL_AMDGPU_ROCJITSU_PATH to the shared library path");
+    }
+  }
+  if (!iree_status_is_ok(status)) return status;
+
+#define IREE_HAL_AMDGPU_ROCJITSU_LOOKUP(symbol_name, target_field)      \
+  if (iree_status_is_ok(status)) {                                      \
+    status = iree_dynamic_library_lookup_symbol(                        \
+        out_api->library, symbol_name, (void**)&out_api->target_field); \
+  }
+  IREE_HAL_AMDGPU_ROCJITSU_LOOKUP("rj_code_object_create_from_memory",
+                                  code_object_create_from_memory);
+  IREE_HAL_AMDGPU_ROCJITSU_LOOKUP("rj_code_object_image_data",
+                                  code_object_image_data);
+  IREE_HAL_AMDGPU_ROCJITSU_LOOKUP("rj_code_object_destroy",
+                                  code_object_destroy);
+  IREE_HAL_AMDGPU_ROCJITSU_LOOKUP("rj_code_translate", code_translate);
+#undef IREE_HAL_AMDGPU_ROCJITSU_LOOKUP
+  IREE_IGNORE_ERROR(iree_dynamic_library_lookup_symbol(
+      out_api->library, "rj_code_last_error", (void**)&out_api->last_error));
+
+  if (!iree_status_is_ok(status)) {
+    iree_dynamic_library_release(out_api->library);
+    memset(out_api, 0, sizeof(*out_api));
+  }
+  return status;
+}
+
+static void iree_hal_amdgpu_rocjitsu_unload_api(
+    iree_hal_amdgpu_rocjitsu_api_t* api) {
+  iree_dynamic_library_release(api->library);
+  memset(api, 0, sizeof(*api));
+}
+
+static iree_status_t iree_hal_amdgpu_executable_translate_code_object(
+    const iree_hal_amdgpu_libhsa_t* libhsa, hsa_agent_t device_agent,
+    iree_allocator_t host_allocator,
+    iree_const_byte_span_t* inout_code_object_data,
+    uint8_t** out_translated_storage) {
+  *out_translated_storage = NULL;
+  if (!iree_hal_amdgpu_rocjitsu_dbt_enabled()) return iree_ok_status();
+
+  iree_hal_amdgpu_target_id_t source_target_id;
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_code_object_target_id_from_elf(
+      *inout_code_object_data, &source_target_id));
+
+  iree_hal_amdgpu_agent_available_isas_t available_isas;
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_query_agent_available_isas(
+      libhsa, device_agent, &available_isas));
+
+  iree_hal_amdgpu_rocjitsu_arch_t guest_arch;
+  iree_hal_amdgpu_rocjitsu_arch_t host_arch;
+  uint32_t target_mach = 0;
+  bool can_translate = false;
+  for (iree_host_size_t i = 0; i < available_isas.count; ++i) {
+    iree_hal_amdgpu_agent_isa_target_t isa_target;
+    IREE_RETURN_IF_ERROR(iree_hal_amdgpu_query_agent_isa_target(
+        libhsa, available_isas.values[i], &isa_target));
+    if (iree_hal_amdgpu_target_id_check_compatible(&source_target_id,
+                                                   &isa_target.target_id) ==
+        IREE_HAL_AMDGPU_TARGET_COMPATIBILITY_COMPATIBLE) {
+      return iree_ok_status();
+    }
+    if (iree_hal_amdgpu_rocjitsu_can_translate(
+            &source_target_id, &isa_target.target_id, &guest_arch, &host_arch,
+            &target_mach)) {
+      can_translate = true;
+      break;
+    }
+  }
+
+  if (!can_translate) {
+    return iree_make_status(IREE_STATUS_INCOMPATIBLE,
+                            "rocjitsu DBT is enabled but cannot translate code "
+                            "object target `%.*s` "
+                            "for this AMDGPU agent",
+                            (int)source_target_id.processor.size,
+                            source_target_id.processor.data);
+  }
+
+  iree_hal_amdgpu_rocjitsu_api_t api;
+  IREE_RETURN_IF_ERROR(iree_hal_amdgpu_rocjitsu_load_api(host_allocator, &api));
+
+  iree_hal_amdgpu_rocjitsu_code_object_t* source = NULL;
+  iree_hal_amdgpu_rocjitsu_code_object_t* translated = NULL;
+  uint8_t* translated_storage = NULL;
+  iree_status_t status = iree_hal_amdgpu_rocjitsu_status_to_iree(
+      "code object import",
+      api.code_object_create_from_memory(
+          inout_code_object_data->data,
+          (uint64_t)inout_code_object_data->data_length, &source));
+
+  if (iree_status_is_ok(status)) {
+    const iree_hal_amdgpu_rocjitsu_dbt_options_t options = {
+        .guest_arch = guest_arch,
+        .host_arch = host_arch,
+        .target_mach = target_mach,
+    };
+    status = iree_hal_amdgpu_rocjitsu_translate_status_to_iree(
+        &api, api.code_translate(source, &options, &translated));
+  }
+
+  const uint8_t* translated_data = NULL;
+  uint64_t translated_size = 0;
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_rocjitsu_status_to_iree(
+        "translated code object export",
+        api.code_object_image_data(translated, &translated_data,
+                                   &translated_size));
+  }
+  if (iree_status_is_ok(status) && translated_size > IREE_HOST_SIZE_MAX) {
+    status = iree_make_status(IREE_STATUS_RESOURCE_EXHAUSTED,
+                              "translated code object is too large");
+  }
+  if (iree_status_is_ok(status)) {
+    status =
+        iree_allocator_malloc(host_allocator, (iree_host_size_t)translated_size,
+                              (void**)&translated_storage);
+  }
+  if (iree_status_is_ok(status)) {
+    memcpy(translated_storage, translated_data,
+           (iree_host_size_t)translated_size);
+    *inout_code_object_data = iree_make_const_byte_span(
+        translated_storage, (iree_host_size_t)translated_size);
+    *out_translated_storage = translated_storage;
+    translated_storage = NULL;
+  }
+
+  if (translated) api.code_object_destroy(translated);
+  if (source) api.code_object_destroy(source);
+  iree_hal_amdgpu_rocjitsu_unload_api(&api);
+  if (translated_storage)
+    iree_allocator_free(host_allocator, translated_storage);
+  return status;
 }
 
 static iree_status_t iree_hal_amdgpu_verify_isas_equal(
@@ -236,6 +561,21 @@ iree_status_t iree_hal_amdgpu_executable_format_supported(
       *out_supported = true;
       if (out_isa) *out_isa = isa_target.isa;
       return iree_ok_status();
+    }
+  }
+
+  if (iree_hal_amdgpu_rocjitsu_dbt_enabled()) {
+    for (iree_host_size_t i = 0; i < available_isas.count; ++i) {
+      iree_hal_amdgpu_agent_isa_target_t isa_target;
+      IREE_RETURN_IF_ERROR(iree_hal_amdgpu_query_agent_isa_target(
+          libhsa, available_isas.values[i], &isa_target));
+      if (iree_hal_amdgpu_rocjitsu_can_translate(
+              &format_target_id, &isa_target.target_id, /*out_guest_arch=*/NULL,
+              /*out_host_arch=*/NULL, /*out_target_mach=*/NULL)) {
+        *out_supported = true;
+        if (out_isa) *out_isa = isa_target.isa;
+        return iree_ok_status();
+      }
     }
   }
 
@@ -1928,6 +2268,13 @@ static iree_status_t iree_hal_amdgpu_executable_create_from_flatbuffer(
         module_defs, &code_object_data);
   }
 
+  uint8_t* translated_code_object_storage = NULL;
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_executable_translate_code_object(
+        libhsa, any_device_agent, host_allocator, &code_object_data,
+        &translated_code_object_storage);
+  }
+
   iree_hal_amdgpu_hsaco_metadata_t hsaco_metadata = {0};
   if (iree_status_is_ok(status)) {
     status = iree_hal_amdgpu_hsaco_metadata_initialize_from_elf(
@@ -2020,6 +2367,9 @@ static iree_status_t iree_hal_amdgpu_executable_create_from_flatbuffer(
   }
 
   iree_hal_amdgpu_hsaco_metadata_deinitialize(&hsaco_metadata);
+  if (translated_code_object_storage) {
+    iree_allocator_free(host_allocator, translated_code_object_storage);
+  }
 
   if (iree_status_is_ok(status)) {
     *out_executable = (iree_hal_executable_t*)executable;
@@ -2041,9 +2391,16 @@ static iree_status_t iree_hal_amdgpu_executable_create_from_raw_hsaco(
   *out_executable = NULL;
 
   iree_const_byte_span_t code_object_data = executable_params->executable_data;
+  uint8_t* translated_code_object_storage = NULL;
+  iree_status_t status = iree_hal_amdgpu_executable_translate_code_object(
+      libhsa, any_device_agent, host_allocator, &code_object_data,
+      &translated_code_object_storage);
+
   iree_hal_amdgpu_hsaco_metadata_t hsaco_metadata = {0};
-  iree_status_t status = iree_hal_amdgpu_hsaco_metadata_initialize_from_elf(
-      code_object_data, host_allocator, &hsaco_metadata);
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_amdgpu_hsaco_metadata_initialize_from_elf(
+        code_object_data, host_allocator, &hsaco_metadata);
+  }
 
   iree_host_size_t export_name_storage_size = 0;
   iree_host_size_t export_parameter_count = 0;
@@ -2125,6 +2482,9 @@ static iree_status_t iree_hal_amdgpu_executable_create_from_raw_hsaco(
   }
 
   iree_hal_amdgpu_hsaco_metadata_deinitialize(&hsaco_metadata);
+  if (translated_code_object_storage) {
+    iree_allocator_free(host_allocator, translated_code_object_storage);
+  }
 
   if (iree_status_is_ok(status)) {
     *out_executable = (iree_hal_executable_t*)executable;
